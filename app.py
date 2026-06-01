@@ -135,12 +135,21 @@ def make_view(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def style_view(view: pd.DataFrame):
-    """Apply good/bad colouring to the stat columns and number formatting."""
-    cols = [c for c in STAT_COLS if c in view.columns and view[c].notna().any()]
-    return (
-        view.style.apply(_gradient, subset=cols)
-        .format({k: v for k, v in STAT_FMT.items() if k in view.columns})
-    )
+    """Apply good/bad colouring to the stat columns and number formatting.
+
+    Per-cell colouring is costly, so it is skipped above STYLE_ROW_LIMIT rows
+    (number formatting is always applied) to keep the table responsive.
+    """
+    fmt = {k: v for k, v in STAT_FMT.items() if k in view.columns}
+    styler = view.style.format(fmt)
+    if len(view) <= STYLE_ROW_LIMIT:
+        cols = [c for c in STAT_COLS if c in view.columns and view[c].notna().any()]
+        styler = styler.apply(_gradient, subset=cols)
+    return styler
+
+
+# Above this many rows, skip per-cell colouring (it dominates render time).
+STYLE_ROW_LIMIT = 500
 
 
 RESULTS_COLCONFIG = {
@@ -297,14 +306,27 @@ if filtered.empty:
 # --------------------------------------------------------------------------- #
 # Results table
 # --------------------------------------------------------------------------- #
-view = make_view(filtered)
-
 st.subheader("Matching lineups")
-st.caption(
-    "Stats are colour-scaled green (good) → red (bad) across the matches. "
-    "Tick the checkboxes to pick lineups, then **Add selected to basket**. "
-    "The basket persists as you change filters."
+
+# Colouring every cell is expensive, so only the top-N (by ROI) are rendered in
+# the interactive table; the full filtered set still feeds the basket / export.
+n_matches = len(filtered)
+hc1, hc2 = st.columns([3, 1])
+hc1.caption(
+    "Stats are colour-scaled green (good) → red (bad). Tick the checkboxes to "
+    "pick lineups, then **Add checked to basket** (which persists across filters)."
 )
+show_n = int(hc2.number_input(
+    "Rows shown", min_value=25, max_value=1000,
+    value=min(250, n_matches), step=25,
+    help="Top lineups by ROI rendered in the table. Lower this if sorting feels "
+    "slow; the full filtered set is still used by 'Add all filtered' and export.",
+))
+
+shown = filtered.head(show_n)
+view = make_view(shown)
+if n_matches > show_n:
+    st.caption(f"Showing the top **{show_n:,}** of **{n_matches:,}** matching lineups by ROI.")
 
 # Selection toolbar.
 tb1, tb2, tb3 = st.columns([1.6, 1.4, 3])
@@ -327,13 +349,13 @@ event = st.dataframe(
 
 picked_rows = event.selection["rows"] if event and event.selection else []
 if add_clicked and picked_rows:
-    st.session_state.selected |= set(filtered.iloc[picked_rows]["LineupNum"].tolist())
+    st.session_state.selected |= set(shown.iloc[picked_rows]["LineupNum"].tolist())
     st.rerun()
 elif add_clicked:
     st.toast("No rows checked — tick lineups in the table first.")
 
 # Quick add-all of the current filter (handy after narrowing a search).
-if st.button(f"➕ Add all {len(filtered):,} filtered lineups to basket"):
+if st.button(f"➕ Add all {n_matches:,} filtered lineups to basket"):
     st.session_state.selected |= set(filtered["LineupNum"].tolist())
     st.rerun()
 

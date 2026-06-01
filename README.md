@@ -26,9 +26,10 @@ The two sim files join on `LineupNum`. Each lineup is a classic MLB roster:
   - **Total salary** range
   - **Minimum ROI / Win % / ITM % / Top 10 %**
 - **Results table** sorted by highest ROI. Shows only the four summary stats —
-  **ROI, Win Rate, ITM%, Top 10%** — each colour-scaled green (good) → red (bad)
-  across the matches, alongside a readable stack label and the full, roster-ordered
-  player list.
+  **ROI, Win Rate, ITM%, Top 10%** — each colour-scaled green (good) → red (bad),
+  alongside a readable stack label and the full, roster-ordered player list. To
+  stay responsive, only the top **N** rows (default 250, adjustable) are rendered
+  with colouring; the full filtered set still drives "Add all filtered" and export.
 - **Lineup detail** view (player-by-player, ordered by roster slot, with rows
   tinted by team so stacks stand out at a glance).
 - **Upload Lineup Template** button — swap in a fresh `DKSalaries.csv` whenever
