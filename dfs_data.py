@@ -26,6 +26,26 @@ SLOT_DISPLAY_ORDER = {
     "SP": 0, "RP": 0, "P": 0, "C": 1, "1B": 2, "2B": 3, "3B": 4, "SS": 5, "OF": 6,
 }
 
+# Classic MLB roster slots, and the disambiguated column labels (P1/P2, OF1..).
+CLASSIC_SLOTS = ["P", "P", "C", "1B", "2B", "3B", "SS", "OF", "OF", "OF"]
+
+
+def slot_labels(slots: list[str]) -> list[str]:
+    """Disambiguate repeated slots: ['P','P','OF',...] -> ['P1','P2','OF1',...]."""
+    counts = Counter(slots)
+    seen: dict[str, int] = {}
+    out = []
+    for s in slots:
+        if counts[s] > 1:
+            seen[s] = seen.get(s, 0) + 1
+            out.append(f"{s}{seen[s]}")
+        else:
+            out.append(s)
+    return out
+
+
+SLOT_LABELS = slot_labels(CLASSIC_SLOTS)
+
 
 def _read_csv(source) -> pd.DataFrame:
     """Read a CSV from a path or an uploaded file-like object, tolerating a BOM."""
@@ -110,6 +130,16 @@ def build_lineup_table(lineups: pd.DataFrame, results: pd.DataFrame) -> pd.DataF
             )
         ).sort_values("_o")
 
+        # Assign each (possibly multi-eligible) player to a concrete roster slot
+        # so the lineup can be shown one player per position column.
+        eligs = [(idx, _eligible_slots(r["Position"])) for idx, r in grp.iterrows()]
+        assigned = _match_to_slots(eligs, CLASSIC_SLOTS)
+        name_by_idx = grp["FullName"].to_dict()
+        slot_players = {
+            label: (name_by_idx.get(key) if key is not None else None)
+            for label, key in zip(SLOT_LABELS, assigned)
+        }
+
         rows.append(
             {
                 "LineupNum": lineup_num,
@@ -119,6 +149,7 @@ def build_lineup_table(lineups: pd.DataFrame, results: pd.DataFrame) -> pd.DataF
                 "TeamSet": set(grp["Team"]),
                 "TotalOwnership": round(float(grp["Ownership"].sum()), 2),
                 "TeamCounts": dict(team_counts),
+                **slot_players,
                 **info,
             }
         )

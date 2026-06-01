@@ -118,20 +118,20 @@ def _stack_label(row) -> str:
     return " / ".join(parts) if parts else "—"
 
 
+# One column per roster slot (Players shown first), then the four stats.
+PLAYER_SLOT_COLS = ["P1", "P2", "C", "1B", "2B", "3B", "SS", "OF1", "OF2", "OF3"]
+
+
 def make_view(df: pd.DataFrame) -> pd.DataFrame:
-    """Build the clean, display-ready lineup table (id, 4 stats, stack, players)."""
-    return pd.DataFrame(
-        {
-            "Lineup #": df["LineupNum"].values,
-            "ROI": df["ROI"].values if "ROI" in df else None,
-            "Win %": df["WinRate"].values if "WinRate" in df else None,
-            "ITM %": df["ITMRate"].values if "ITMRate" in df else None,
-            "Top10 %": df["Top10Rate"].values if "Top10Rate" in df else None,
-            "Stacks": df.apply(_stack_label, axis=1).values,
-            "Players": df["Players"].apply(", ".join).values,
-            "Salary": df["TotalSalary"].values,
-        }
-    )
+    """Build the display table: a column per position, then the 4 stats."""
+    data = {c: df[c].values for c in PLAYER_SLOT_COLS}
+    data["ROI"] = df["ROI"].values if "ROI" in df else None
+    data["Win %"] = df["WinRate"].values if "WinRate" in df else None
+    data["ITM %"] = df["ITMRate"].values if "ITMRate" in df else None
+    data["Top10 %"] = df["Top10Rate"].values if "Top10Rate" in df else None
+    data["Stacks"] = df.apply(_stack_label, axis=1).values
+    data["Salary"] = df["TotalSalary"].values
+    return pd.DataFrame(data)
 
 
 def style_view(view: pd.DataFrame):
@@ -153,81 +153,93 @@ STYLE_ROW_LIMIT = 500
 
 
 RESULTS_COLCONFIG = {
-    "Lineup #": st.column_config.NumberColumn(width="small"),
-    "Players": st.column_config.TextColumn(width="large"),
-    "Stacks": st.column_config.TextColumn(width="medium"),
+    **{c: st.column_config.TextColumn(width="small") for c in PLAYER_SLOT_COLS},
+    "Stacks": st.column_config.TextColumn(width="small"),
 }
 
 # --------------------------------------------------------------------------- #
-# Sidebar — DK upload template
+# Header
 # --------------------------------------------------------------------------- #
-st.sidebar.header("⚙️ Lineup Template")
-uploaded = st.sidebar.file_uploader(
-    "Upload DK Salaries template (.csv)",
-    type="csv",
-    help="DraftKings export changes often. Upload a fresh DKSalaries.csv to use "
-    "the current player IDs and roster slots for the export below.",
-)
-try:
-    if uploaded is not None:
-        slots, dk_players = parse_uploaded_template(uploaded.getvalue())
-        st.sidebar.success(f"Using uploaded template ({len(dk_players)} players).")
-    else:
-        slots, dk_players = get_default_template()
-        st.sidebar.caption("Using bundled DKSalaries.csv.")
-    valid_ids = set(dk_players["ID"].astype(str))
-except Exception as exc:  # noqa: BLE001
-    st.sidebar.error(f"Template error: {exc}")
-    slots, valid_ids = (
-        ["P", "P", "C", "1B", "2B", "3B", "SS", "OF", "OF", "OF"],
-        None,
-    )
+st.title("⚾ DFS Lineup Explorer")
+st.caption("Filter and query simulated DraftKings lineups, sorted by ROI.")
 
 # --------------------------------------------------------------------------- #
-# Sidebar — filters
+# Lineup template (DraftKings upload) — collapsible, top of page
 # --------------------------------------------------------------------------- #
-st.sidebar.header("🔍 Filters")
-
-with st.sidebar.expander("Players", expanded=True):
-    include_players = st.multiselect("Include players", all_player_names)
-    include_mode = st.radio(
-        "Match", ["All of these", "Any of these"], horizontal=True,
-        help="Whether a lineup must contain all selected players or just one.",
+with st.expander("⚙️ Lineup template (DraftKings upload)", expanded=False):
+    uploaded = st.file_uploader(
+        "Upload DK Salaries template (.csv)",
+        type="csv",
+        help="DraftKings export changes often. Upload a fresh DKSalaries.csv to "
+        "use the current player IDs for the export.",
     )
-    exclude_players = st.multiselect("Exclude players", all_player_names)
+    try:
+        if uploaded is not None:
+            slots, dk_players = parse_uploaded_template(uploaded.getvalue())
+            st.success(f"Using uploaded template ({len(dk_players)} players).")
+        else:
+            slots, dk_players = get_default_template()
+            st.caption("Using bundled DKSalaries.csv.")
+        valid_ids = set(dk_players["ID"].astype(str))
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Template error: {exc}")
+        slots, valid_ids = (
+            ["P", "P", "C", "1B", "2B", "3B", "SS", "OF", "OF", "OF"],
+            None,
+        )
 
-with st.sidebar.expander("Stacks", expanded=True):
-    stack_teams = st.multiselect("Stack team(s)", all_teams,
-                                 help="Lineups that stack one of these teams.")
-    min_stack_size = st.slider(
-        "Min stack size", 1, 6, 1,
-        help="For the team filter, and the minimum size of a lineup's primary stack.",
-    )
-    stack_patterns = st.multiselect(
-        "Stack pattern(s)", all_patterns,
-        help="e.g. 5-3 = a 5-stack plus a 3-stack of hitters.",
-    )
+# --------------------------------------------------------------------------- #
+# Filters — across the top so the table can use the full width
+# --------------------------------------------------------------------------- #
+with st.expander("🔍 Filters", expanded=True):
+    fc1, fc2, fc3, fc4 = st.columns(4)
 
-with st.sidebar.expander("Teams in pool", expanded=False):
-    pool_teams = st.multiselect(
-        "Restrict to teams", all_teams,
-        help="Only lineups whose players all come from these teams.",
-    )
+    with fc1:
+        st.markdown("**Players**")
+        include_players = st.multiselect("Include players", all_player_names)
+        include_mode = st.radio(
+            "Match", ["All of these", "Any of these"], horizontal=True,
+            help="Whether a lineup must contain all selected players or just one.",
+        )
+        exclude_players = st.multiselect("Exclude players", all_player_names)
 
-with st.sidebar.expander("Salary & results", expanded=True):
-    sal_min, sal_max = int(table["TotalSalary"].min()), int(table["TotalSalary"].max())
-    salary_range = st.slider("Total salary", sal_min, sal_max, (sal_min, sal_max), step=100)
+    with fc2:
+        st.markdown("**Stacks**")
+        stack_teams = st.multiselect("Stack team(s)", all_teams,
+                                     help="Lineups that stack one of these teams.")
+        min_stack_size = st.slider(
+            "Min stack size", 1, 6, 1,
+            help="For the team filter, and the minimum size of a lineup's primary stack.",
+        )
+        stack_patterns = st.multiselect(
+            "Stack pattern(s)", all_patterns,
+            help="e.g. 5-3 = a 5-stack plus a 3-stack of hitters.",
+        )
 
-    def _stat_slider(col, label, fmt="%.2f"):
-        if col not in table.columns or table[col].dropna().empty:
-            return None
-        lo, hi = float(table[col].min()), float(table[col].max())
-        return st.slider(label, lo, hi, lo, format=fmt)
+    with fc3:
+        st.markdown("**Teams in pool**")
+        pool_teams = st.multiselect(
+            "Restrict to teams", all_teams,
+            help="Only lineups whose players all come from these teams.",
+        )
+        sal_min = int(table["TotalSalary"].min())
+        sal_max = int(table["TotalSalary"].max())
+        salary_range = st.slider("Total salary", sal_min, sal_max,
+                                 (sal_min, sal_max), step=100)
 
-    min_roi = _stat_slider("ROI", "Min ROI")
-    min_win = _stat_slider("WinRate", "Min Win Rate %")
-    min_itm = _stat_slider("ITMRate", "Min ITM Rate %")
-    min_top10 = _stat_slider("Top10Rate", "Min Top 10 %")
+    with fc4:
+        st.markdown("**Minimum results**")
+
+        def _stat_slider(col, label, fmt="%.2f"):
+            if col not in table.columns or table[col].dropna().empty:
+                return None
+            lo, hi = float(table[col].min()), float(table[col].max())
+            return st.slider(label, lo, hi, lo, format=fmt)
+
+        min_roi = _stat_slider("ROI", "Min ROI")
+        min_win = _stat_slider("WinRate", "Min Win Rate %")
+        min_itm = _stat_slider("ITMRate", "Min ITM Rate %")
+        min_top10 = _stat_slider("Top10Rate", "Min Top 10 %")
 
 
 # --------------------------------------------------------------------------- #
@@ -281,11 +293,8 @@ if "ROI" in filtered.columns:
     filtered = filtered.sort_values("ROI", ascending=False, na_position="last")
 
 # --------------------------------------------------------------------------- #
-# Header + summary metrics
+# Summary metrics
 # --------------------------------------------------------------------------- #
-st.title("⚾ DFS Lineup Explorer")
-st.caption("Filter and query simulated DraftKings lineups, sorted by ROI.")
-
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Lineups", f"{len(filtered):,}", f"of {len(table):,}")
 if not filtered.empty:
@@ -300,7 +309,7 @@ if not filtered.empty:
 st.divider()
 
 if filtered.empty:
-    st.warning("No lineups match the current filters. Loosen them in the sidebar.")
+    st.warning("No lineups match the current filters. Loosen them above.")
     st.stop()
 
 # --------------------------------------------------------------------------- #
