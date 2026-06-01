@@ -37,6 +37,10 @@ The two sim files join on `LineupNum`. Each lineup is a classic MLB roster:
     each (possibly multi-position) player assigned to a roster slot via
     bipartite matching and IDs in DK slot order.
   - **Selected summary CSV** — the selected lineups with their stats.
+- **Exposure charts** in the basket — player and team exposure (the % of your
+  selected lineups containing each player/team) as sorted bar charts, with an
+  adjustable max-exposure target line that highlights anyone you're overweight
+  on. Updates live as you add or remove lineups.
 
 ## Run
 

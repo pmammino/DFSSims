@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -343,6 +344,82 @@ to_remove = rc1.multiselect(
 if rc2.button("Remove", use_container_width=True) and to_remove:
     st.session_state.selected -= set(to_remove)
     st.rerun()
+
+# --------------------------------------------------------------------------- #
+# Exposure — guard against being overweight on any one player / team
+# --------------------------------------------------------------------------- #
+st.markdown("#### 📊 Exposure across selected lineups")
+n_sel = len(selected_nums)
+ec1, ec2 = st.columns([2, 1])
+target = ec1.slider(
+    "Max exposure target %", 5, 100, 50, 5,
+    help="Players/teams above this line are highlighted in red — a signal you "
+    "may be overweight.",
+)
+top_n = ec2.number_input("Show top N", min_value=5, max_value=200, value=30, step=5)
+
+sel_players = players[players["LineupNum"].isin(selected_nums)]
+
+
+def _exposure_chart(df, label_col, count_label):
+    """Sorted horizontal bar chart of exposure %, with a target rule line."""
+    shown = df.head(int(top_n))
+    bars = (
+        alt.Chart(shown)
+        .mark_bar()
+        .encode(
+            x=alt.X("Exposure:Q", title="Exposure %", scale=alt.Scale(domain=[0, 100])),
+            y=alt.Y(f"{label_col}:N", sort="-x", title=None),
+            color=alt.condition(
+                alt.datum.Exposure > target,
+                alt.value("#e45756"),  # red = over target
+                alt.value("#4c78a8"),
+            ),
+            tooltip=[
+                alt.Tooltip(f"{label_col}:N", title=count_label),
+                alt.Tooltip("Lineups:Q"),
+                alt.Tooltip("Exposure:Q", title="Exposure %", format=".1f"),
+            ],
+        )
+        .properties(height=max(150, 18 * len(shown)))
+    )
+    rule = (
+        alt.Chart(pd.DataFrame({"t": [target]}))
+        .mark_rule(color="#999", strokeDash=[4, 4])
+        .encode(x="t:Q")
+    )
+    st.altair_chart(bars + rule, use_container_width=True)
+
+
+tab_players, tab_teams = st.tabs(["Players", "Teams"])
+
+with tab_players:
+    pe = (
+        sel_players.groupby(["FullName", "Team"])["LineupNum"]
+        .nunique()
+        .reset_index(name="Lineups")
+    )
+    pe["Exposure"] = (100 * pe["Lineups"] / n_sel).round(1)
+    pe = pe.sort_values("Exposure", ascending=False).reset_index(drop=True)
+    over = pe[pe["Exposure"] > target]
+    if not over.empty:
+        st.caption(
+            f"⚠️ {len(over)} player(s) above your {target}% target: "
+            + ", ".join(f"{r.FullName} ({r.Exposure:.0f}%)" for r in over.head(8).itertuples())
+            + ("…" if len(over) > 8 else "")
+        )
+    _exposure_chart(pe, "FullName", "Player")
+
+with tab_teams:
+    te = (
+        sel_players.groupby("Team")["LineupNum"]
+        .nunique()
+        .reset_index(name="Lineups")
+    )
+    te["Exposure"] = (100 * te["Lineups"] / n_sel).round(1)
+    te = te.sort_values("Exposure", ascending=False).reset_index(drop=True)
+    st.caption("Share of selected lineups containing at least one player from each team.")
+    _exposure_chart(te, "Team", "Team")
 
 # --------------------------------------------------------------------------- #
 # Export the selected lineups
