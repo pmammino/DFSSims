@@ -581,10 +581,14 @@ def _hbar(df, label, value, value_title, top=40, color="#4c78a8"):
         .mark_bar(color=color)
         .encode(
             x=alt.X(f"{value}:Q", title=value_title),
-            y=alt.Y(f"{label}:N", sort="-x", title=None),
+            y=alt.Y(
+                f"{label}:N", sort="-x", title=None,
+                # Show every label (Vega-Lite otherwise thins them when crowded).
+                axis=alt.Axis(labelOverlap=False, labelLimit=300),
+            ),
             tooltip=list(df.columns),
         )
-        .properties(height=max(140, 20 * len(shown)))
+        .properties(height=max(140, 24 * len(shown)))
     )
     st.altair_chart(chart, use_container_width=True)
 
