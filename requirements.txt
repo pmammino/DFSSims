@@ -1,2 +1,5 @@
 streamlit>=1.40
 pandas>=2.0
+# Optional: enables the Claude-powered conversational filter.
+# Install and set ANTHROPIC_API_KEY to turn it on; the offline parser works without it.
+# anthropic>=0.69

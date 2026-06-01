@@ -13,6 +13,7 @@ import pandas as pd
 import streamlit as st
 
 import dfs_data as dd
+import nl_filter as nf
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LINEUPS_CSV = os.path.join(HERE, "sim_lineups.csv")
@@ -65,6 +66,10 @@ all_patterns = sorted(table["StackPattern"].unique())
 # filter changes and reruns until the user unchecks or clears them.
 if "selected" not in st.session_state:
     st.session_state.selected = set()
+
+# Defaults for the filter widgets that the conversational parser can populate.
+st.session_state.setdefault("f_inc_mode", "All of these")
+st.session_state.setdefault("f_min_stack", 1)
 
 # --------------------------------------------------------------------------- #
 # Display helpers — clean lineup views + good/bad coloration
@@ -202,6 +207,75 @@ with st.expander("⚙️ Lineup template (DraftKings upload)", expanded=False):
         )
 
 # --------------------------------------------------------------------------- #
+# Conversational filtering — describe your lineups in plain English
+# --------------------------------------------------------------------------- #
+with st.expander("💬 Describe your lineups", expanded=True):
+    st.caption(
+        "Tell me who you're high on and who to fade — e.g. *“Stack the Dodgers "
+        "5-man with Mookie Betts, I'm high on Bobby Witt Jr., fade the Yankees "
+        "and avoid the Reds.”* I'll set the filters below; tweak them as you like."
+    )
+    narrative = st.text_area(
+        "Your notes", key="nl_text", height=90, label_visibility="collapsed",
+        placeholder="Describe the players/teams you like and want to fade…",
+    )
+    nc1, nc2 = st.columns([1, 3])
+    apply_narr = nc1.button("✨ Build filters from my notes", use_container_width=True)
+    use_llm = False
+    if nf.llm_available():
+        use_llm = nc2.checkbox(
+            "Use Claude for richer understanding (ANTHROPIC_API_KEY detected)",
+            value=True,
+        )
+    else:
+        nc2.caption("Offline parser active. Set ANTHROPIC_API_KEY to enable Claude.")
+
+    if apply_narr and narrative.strip():
+        parsed = (nf.parse_with_llm if use_llm else nf.parse_offline)(
+            narrative, all_player_names, set(all_teams)
+        )
+        # Push the interpretation into the filter widgets (editable below).
+        st.session_state["f_include"] = parsed["include_players"]
+        st.session_state["f_exclude"] = parsed["exclude_players"]
+        st.session_state["f_stack_teams"] = parsed["stack_teams"]
+        st.session_state["f_exclude_teams"] = parsed["exclude_teams"]
+        st.session_state["f_min_stack"] = parsed["min_stack_size"]
+        # Several named players usually means "feature any of them", not all.
+        st.session_state["f_inc_mode"] = (
+            "Any of these" if len(parsed["include_players"]) > 1 else "All of these"
+        )
+        st.session_state["nl_summary"] = parsed
+        st.rerun()
+
+    summary = st.session_state.get("nl_summary")
+    if summary:
+        bits = []
+        if summary["include_players"]:
+            bits.append("**Include:** " + ", ".join(summary["include_players"]))
+        if summary["stack_teams"]:
+            bits.append(
+                f"**Stack:** {', '.join(summary['stack_teams'])} "
+                f"({summary['min_stack_size']}+)"
+            )
+        if summary["exclude_teams"]:
+            bits.append("**Fade teams:** " + ", ".join(summary["exclude_teams"]))
+        if summary["exclude_players"]:
+            bits.append("**Fade players:** " + ", ".join(summary["exclude_players"]))
+        src = "Claude" if summary.get("source") == "claude" else "offline parser"
+        st.success(
+            (" · ".join(bits) if bits else "No filters detected.")
+            + f"  \n_Interpreted by {src}. Adjust in Filters below._"
+        )
+        for note in summary.get("notes", []):
+            st.warning(note)
+        if st.button("Clear conversational filters"):
+            for k in ("f_include", "f_exclude", "f_stack_teams", "f_exclude_teams"):
+                st.session_state[k] = []
+            st.session_state["f_min_stack"] = 1
+            st.session_state.pop("nl_summary", None)
+            st.rerun()
+
+# --------------------------------------------------------------------------- #
 # Filters — across the top so the table can use the full width
 # --------------------------------------------------------------------------- #
 with st.expander("🔍 Filters", expanded=False):
@@ -209,28 +283,35 @@ with st.expander("🔍 Filters", expanded=False):
 
     with fc1:
         st.markdown("**Players**")
-        include_players = st.multiselect("Include players", all_player_names)
+        include_players = st.multiselect("Include players", all_player_names,
+                                         key="f_include")
         include_mode = st.radio(
             "Match", ["All of these", "Any of these"], horizontal=True,
+            key="f_inc_mode",
             help="Whether a lineup must contain all selected players or just one.",
         )
-        exclude_players = st.multiselect("Exclude players", all_player_names)
+        exclude_players = st.multiselect("Exclude players", all_player_names,
+                                         key="f_exclude")
 
     with fc2:
         st.markdown("**Stacks**")
-        stack_teams = st.multiselect("Stack team(s)", all_teams,
+        stack_teams = st.multiselect("Stack team(s)", all_teams, key="f_stack_teams",
                                      help="Lineups that stack one of these teams.")
         min_stack_size = st.slider(
-            "Min stack size", 1, 6, 1,
+            "Min stack size", 1, 6, key="f_min_stack",
             help="For the team filter, and the minimum size of a lineup's primary stack.",
         )
         stack_patterns = st.multiselect(
-            "Stack pattern(s)", all_patterns,
+            "Stack pattern(s)", all_patterns, key="f_patterns",
             help="e.g. 5-3 = a 5-stack plus a 3-stack of hitters.",
         )
 
     with fc3:
-        st.markdown("**Teams in pool**")
+        st.markdown("**Teams**")
+        exclude_teams = st.multiselect(
+            "Fade team(s)", all_teams, key="f_exclude_teams",
+            help="Drop any lineup containing a player from these teams.",
+        )
         pool_teams = st.multiselect(
             "Restrict to teams", all_teams,
             help="Only lineups whose players all come from these teams.",
@@ -271,6 +352,10 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     if exclude_players:
         avoid = set(exclude_players)
         mask &= df["PlayerSet"].apply(lambda s: not (avoid & s))
+
+    if exclude_teams:
+        avoid_t = set(exclude_teams)
+        mask &= df["TeamSet"].apply(lambda s: not (avoid_t & s))
 
     if stack_teams:
         # Lineup matches if ANY selected team has >= min_stack_size hitters.

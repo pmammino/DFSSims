@@ -24,10 +24,19 @@ population of lineups).
 
 ### Explore & Build
 
+- **💬 Conversational filtering** — describe your slate in plain English
+  (*"Stack the Dodgers 5-man with Mookie Betts, I'm high on Bobby Witt Jr., fade
+  the Yankees and avoid the Reds"*) and the app sets the filters for you, showing
+  an editable summary of what it decided. An always-on **offline parser** knows
+  all 30 MLB teams (nicknames, cities, abbreviations) and your player pool, plus
+  intent cues (high on / love / stack / fade / avoid / no …). If
+  `ANTHROPIC_API_KEY` is set (and `anthropic` is installed), it can optionally use
+  **Claude** for richer, open-ended understanding — otherwise it stays fully local.
 - **Filter & query** lineups by:
   - **Stack team(s)** + **minimum stack size** (e.g. lineups with a 5-stack of the Angels)
   - **Stack pattern** (e.g. `5-3`, `4-2`, `2-2-2`)
   - **Included / excluded players** (match *all* or *any*)
+  - **Fade team(s)** (drop any lineup containing those teams)
   - **Teams in pool** (restrict to a set of teams)
   - **Total salary** range
   - **Minimum ROI / Win % / ITM % / Top 10 %**
