@@ -21,6 +21,11 @@ PITCHER_POSITIONS = {"SP", "RP", "P"}
 # How a sim_lineups assigned Position maps onto a DraftKings roster slot.
 POSITION_TO_SLOT = {"SP": "P", "RP": "P", "P": "P"}
 
+# Roster-slot ordering used to sort players for readable display.
+SLOT_DISPLAY_ORDER = {
+    "SP": 0, "RP": 0, "P": 0, "C": 1, "1B": 2, "2B": 3, "3B": 4, "SS": 5, "OF": 6,
+}
+
 
 def _read_csv(source) -> pd.DataFrame:
     """Read a CSV from a path or an uploaded file-like object, tolerating a BOM."""
@@ -97,11 +102,19 @@ def build_lineup_table(lineups: pd.DataFrame, results: pd.DataFrame) -> pd.DataF
         team_counts = Counter(hitters["Team"])
         info = _stack_info(team_counts)
 
+        # Order players by roster slot (P, C, 1B, 2B, 3B, SS, OF) for readable
+        # display; multi-position players sort by their first eligible slot.
+        ordered = grp.assign(
+            _o=grp["Position"].map(
+                lambda p: SLOT_DISPLAY_ORDER.get(str(p).split("/")[0], 9)
+            )
+        ).sort_values("_o")
+
         rows.append(
             {
                 "LineupNum": lineup_num,
                 "TotalSalary": int(grp["Salary"].sum()),
-                "Players": list(grp["FullName"]),
+                "Players": list(ordered["FullName"]),
                 "PlayerSet": set(grp["FullName"]),
                 "TeamSet": set(grp["Team"]),
                 "TotalOwnership": round(float(grp["Ownership"].sum()), 2),

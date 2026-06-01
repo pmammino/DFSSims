@@ -66,6 +66,90 @@ if "selected" not in st.session_state:
     st.session_state.selected = set()
 
 # --------------------------------------------------------------------------- #
+# Display helpers — clean lineup views + good/bad coloration
+# --------------------------------------------------------------------------- #
+# The only summary stats shown (all "higher is better" -> green = good).
+STAT_COLS = ["ROI", "Win %", "ITM %", "Top10 %"]
+STAT_FMT = {"ROI": "{:.1f}", "Win %": "{:.2f}", "ITM %": "{:.1f}",
+            "Top10 %": "{:.2f}", "Salary": "${:,.0f}"}
+
+# Excel-style 3-colour scale: red (low) -> yellow (mid) -> green (high).
+_SCALE = [(248, 105, 107), (255, 235, 132), (99, 190, 123)]
+
+
+def _lerp(a, b, t):
+    return tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
+
+
+def _heat_color(t: float) -> str:
+    t = max(0.0, min(1.0, t))
+    c = _lerp(_SCALE[0], _SCALE[1], t / 0.5) if t < 0.5 \
+        else _lerp(_SCALE[1], _SCALE[2], (t - 0.5) / 0.5)
+    return f"background-color: rgb({c[0]},{c[1]},{c[2]}); color: #1a1a1a"
+
+
+def _gradient(col: pd.Series) -> list[str]:
+    """Per-column red->green background, scaled across the visible rows."""
+    vals = pd.to_numeric(col, errors="coerce")
+    vmin, vmax = vals.min(), vals.max()
+    rng = vmax - vmin
+    return [
+        _heat_color(0.5 if (rng == 0 or pd.isna(v)) else (v - vmin) / rng)
+        for v in vals
+    ]
+
+
+# Consistent pastel colour per team (used to highlight stacks in the detail view).
+_TEAM_PALETTE = [
+    "#cfe8ff", "#ffe0cc", "#d9f2d0", "#f3d9ff", "#fff2cc", "#d0f0f0",
+    "#ffd6e0", "#e8e8e8", "#e3eaa7", "#c9e4de", "#f7c9c9", "#cdd6ff",
+    "#ffe8b3", "#d7f0c2",
+]
+TEAM_COLORS = {t: _TEAM_PALETTE[i % len(_TEAM_PALETTE)] for i, t in enumerate(all_teams)}
+
+
+def _stack_label(row) -> str:
+    """Readable stack summary, e.g. 'Angels 5 / Dodgers 2'."""
+    parts = []
+    if row["PrimaryStackSize"] >= 2:
+        parts.append(f"{row['PrimaryStackTeam']} {row['PrimaryStackSize']}")
+    if row["SecondaryStackSize"] >= 2:
+        parts.append(f"{row['SecondaryStackTeam']} {row['SecondaryStackSize']}")
+    return " / ".join(parts) if parts else "—"
+
+
+def make_view(df: pd.DataFrame) -> pd.DataFrame:
+    """Build the clean, display-ready lineup table (id, 4 stats, stack, players)."""
+    return pd.DataFrame(
+        {
+            "Lineup #": df["LineupNum"].values,
+            "ROI": df["ROI"].values if "ROI" in df else None,
+            "Win %": df["WinRate"].values if "WinRate" in df else None,
+            "ITM %": df["ITMRate"].values if "ITMRate" in df else None,
+            "Top10 %": df["Top10Rate"].values if "Top10Rate" in df else None,
+            "Stacks": df.apply(_stack_label, axis=1).values,
+            "Players": df["Players"].apply(", ".join).values,
+            "Salary": df["TotalSalary"].values,
+        }
+    )
+
+
+def style_view(view: pd.DataFrame):
+    """Apply good/bad colouring to the stat columns and number formatting."""
+    cols = [c for c in STAT_COLS if c in view.columns and view[c].notna().any()]
+    return (
+        view.style.apply(_gradient, subset=cols)
+        .format({k: v for k, v in STAT_FMT.items() if k in view.columns})
+    )
+
+
+RESULTS_COLCONFIG = {
+    "Lineup #": st.column_config.NumberColumn(width="small"),
+    "Players": st.column_config.TextColumn(width="large"),
+    "Stacks": st.column_config.TextColumn(width="medium"),
+}
+
+# --------------------------------------------------------------------------- #
 # Sidebar — DK upload template
 # --------------------------------------------------------------------------- #
 st.sidebar.header("⚙️ Lineup Template")
@@ -213,66 +297,44 @@ if filtered.empty:
 # --------------------------------------------------------------------------- #
 # Results table
 # --------------------------------------------------------------------------- #
-display_cols = {
-    "LineupNum": "Lineup #",
-    "ROI": "ROI",
-    "WinRate": "Win %",
-    "ITMRate": "ITM %",
-    "Top10Rate": "Top10 %",
-    "AvgProfit": "Avg Profit",
-    "TotalSalary": "Salary",
-    "TotalOwnership": "Own % Σ",
-    "StackPattern": "Stack",
-    "PrimaryStackTeam": "Primary Stack",
-}
-display_cols = {k: v for k, v in display_cols.items() if k in filtered.columns}
-
-view = filtered[list(display_cols)].rename(columns=display_cols).copy()
-view["Players"] = filtered["Players"].apply(lambda ps: ", ".join(ps))
+view = make_view(filtered)
 
 st.subheader("Matching lineups")
 st.caption(
-    "Tick **✓ Select** to add a lineup to your export basket. Selections persist "
-    "across filter changes — unticking removes them (or use the controls below)."
+    "Stats are colour-scaled green (good) → red (bad) across the matches. "
+    "Tick the checkboxes to pick lineups, then **Add selected to basket**. "
+    "The basket persists as you change filters."
 )
 
-# Selection toolbar (mutates the basket explicitly, above the grid).
-tb1, tb2, tb3 = st.columns([1.4, 1.4, 3])
-if tb1.button("➕ Add all filtered", use_container_width=True):
-    st.session_state.selected |= set(filtered["LineupNum"].tolist())
-    st.rerun()
-if tb2.button("🗑️ Clear all selected", use_container_width=True):
+# Selection toolbar.
+tb1, tb2, tb3 = st.columns([1.6, 1.4, 3])
+add_clicked = tb1.button("➕ Add checked to basket", use_container_width=True)
+if tb2.button("🗑️ Clear basket", use_container_width=True):
     st.session_state.selected = set()
     st.rerun()
 tb3.metric("In export basket", f"{len(st.session_state.selected):,}")
 
-# Editable grid: a Select checkbox column, everything else read-only.
-grid = view.copy()
-grid.insert(0, "✓ Select", grid["Lineup #"].isin(st.session_state.selected))
-edited = st.data_editor(
-    grid,
+event = st.dataframe(
+    style_view(view),
     use_container_width=True,
     hide_index=True,
     height=460,
-    disabled=[c for c in grid.columns if c != "✓ Select"],
-    column_config={
-        "✓ Select": st.column_config.CheckboxColumn(),
-        "ROI": st.column_config.NumberColumn(format="%.1f"),
-        "Win %": st.column_config.NumberColumn(format="%.2f"),
-        "ITM %": st.column_config.NumberColumn(format="%.1f"),
-        "Top10 %": st.column_config.NumberColumn(format="%.2f"),
-        "Salary": st.column_config.NumberColumn(format="$%d"),
-    },
+    column_config=RESULTS_COLCONFIG,
+    on_select="rerun",
+    selection_mode="multi-row",
     key="results_grid",
 )
 
-# Reconcile the basket from the grid: for the rows currently visible, the
-# checkbox state is authoritative; selections outside the filter are untouched.
-visible = set(edited["Lineup #"])
-checked = set(edited.loc[edited["✓ Select"], "Lineup #"])
-new_selected = (st.session_state.selected - visible) | checked
-if new_selected != st.session_state.selected:
-    st.session_state.selected = new_selected
+picked_rows = event.selection["rows"] if event and event.selection else []
+if add_clicked and picked_rows:
+    st.session_state.selected |= set(filtered.iloc[picked_rows]["LineupNum"].tolist())
+    st.rerun()
+elif add_clicked:
+    st.toast("No rows checked — tick lineups in the table first.")
+
+# Quick add-all of the current filter (handy after narrowing a search).
+if st.button(f"➕ Add all {len(filtered):,} filtered lineups to basket"):
+    st.session_state.selected |= set(filtered["LineupNum"].tolist())
     st.rerun()
 
 # --------------------------------------------------------------------------- #
@@ -287,19 +349,27 @@ sel = st.selectbox(
        if "ROI" in table.columns else ""),
 )
 detail = players[players["LineupNum"] == sel].copy()
-slot_order = {"SP": 0, "P": 0, "C": 1, "1B": 2, "2B": 3, "3B": 4, "SS": 5, "OF": 6}
-detail["_o"] = detail["Position"].map(slot_order).fillna(9)
+detail["_o"] = detail["Position"].map(
+    lambda p: dd.SLOT_DISPLAY_ORDER.get(str(p).split("/")[0], 9)
+)
 detail = detail.sort_values("_o")
+detail_view = detail[["Position", "FullName", "Team", "Salary", "Ownership"]].rename(
+    columns={"FullName": "Player", "Ownership": "Own %"}
+)
+
+
+def _team_row(row):
+    # Tint each row by its team so stacks are obvious at a glance.
+    bg = TEAM_COLORS.get(row["Team"], "#ffffff")
+    return [f"background-color: {bg}; color: #1a1a1a"] * len(row)
+
+
 st.dataframe(
-    detail[["Position", "FullName", "Team", "Salary", "Ownership"]].rename(
-        columns={"FullName": "Player", "Ownership": "Own %"}
+    detail_view.style.apply(_team_row, axis=1).format(
+        {"Salary": "${:,.0f}", "Own %": "{:.2f}"}
     ),
     use_container_width=True,
     hide_index=True,
-    column_config={
-        "Salary": st.column_config.NumberColumn(format="$%d"),
-        "Own %": st.column_config.NumberColumn(format="%.2f"),
-    },
 )
 
 # --------------------------------------------------------------------------- #
@@ -322,17 +392,10 @@ basket = table[table["LineupNum"].isin(selected_nums)].copy()
 if "ROI" in basket.columns:
     basket = basket.sort_values("ROI", ascending=False, na_position="last")
 
-basket_view = basket[list(display_cols)].rename(columns=display_cols).copy()
-basket_view["Players"] = basket["Players"].apply(lambda ps: ", ".join(ps))
+basket_view = make_view(basket)
 st.dataframe(
-    basket_view, use_container_width=True, hide_index=True, height=240,
-    column_config={
-        "ROI": st.column_config.NumberColumn(format="%.1f"),
-        "Win %": st.column_config.NumberColumn(format="%.2f"),
-        "ITM %": st.column_config.NumberColumn(format="%.1f"),
-        "Top10 %": st.column_config.NumberColumn(format="%.2f"),
-        "Salary": st.column_config.NumberColumn(format="$%d"),
-    },
+    style_view(basket_view), use_container_width=True, hide_index=True, height=240,
+    column_config=RESULTS_COLCONFIG,
 )
 
 rc1, rc2 = st.columns([3, 1])
