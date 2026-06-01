@@ -18,6 +18,12 @@ The two sim files join on `LineupNum`. Each lineup is a classic MLB roster:
 
 ## Features
 
+The app has two top-level tabs: **🔍 Explore & Build** (search, select, and
+export lineups) and **📊 Summary Stats** (aggregate breakdowns across a chosen
+population of lineups).
+
+### Explore & Build
+
 - **Filter & query** lineups by:
   - **Stack team(s)** + **minimum stack size** (e.g. lineups with a 5-stack of the Angels)
   - **Stack pattern** (e.g. `5-3`, `4-2`, `2-2-2`)
@@ -51,6 +57,18 @@ The two sim files join on `LineupNum`. Each lineup is a classic MLB roster:
   selected lineups containing each player/team) as sorted bar charts, with an
   adjustable max-exposure target line that highlights anyone you're overweight
   on. Updates live as you add or remove lineups.
+
+### Summary Stats
+
+Aggregate breakdowns over a chosen population — **Top N by ROI** (e.g. the best
+200 lineups), the **current filter**, or **all lineups** — across three sub-tabs:
+
+- **Players** — player frequency (how many of the population's lineups each
+  player appears in, and the %), with avg ownership, a bar chart, and a CSV export.
+- **Stacks** — stack-pattern frequency (`5-2`, `4-3`, …), primary-stack-team
+  frequency, primary-stack-size distribution, and how often each team is
+  stacked (2+ hitters).
+- **Teams** — total roster spots (player appearances) and lineup count per team.
 
 ## Run
 

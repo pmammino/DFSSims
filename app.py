@@ -6,6 +6,7 @@ Run with:  streamlit run app.py
 from __future__ import annotations
 
 import os
+from collections import Counter
 
 import altair as alt
 import pandas as pd
@@ -304,264 +305,431 @@ filtered = apply_filters(table)
 if "ROI" in filtered.columns:
     filtered = filtered.sort_values("ROI", ascending=False, na_position="last")
 
-# --------------------------------------------------------------------------- #
-# Summary metrics
-# --------------------------------------------------------------------------- #
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Lineups", f"{len(filtered):,}", f"of {len(table):,}")
-if not filtered.empty:
-    if "ROI" in filtered.columns:
-        c2.metric("Best ROI", f"{filtered['ROI'].max():.1f}")
-        c3.metric("Avg ROI", f"{filtered['ROI'].mean():.1f}")
-    if "WinRate" in filtered.columns:
-        c4.metric("Avg Win %", f"{filtered['WinRate'].mean():.2f}")
-    if "ITMRate" in filtered.columns:
-        c5.metric("Avg ITM %", f"{filtered['ITMRate'].mean():.1f}")
-
-st.divider()
-
-if filtered.empty:
-    st.warning("No lineups match the current filters. Loosen them above.")
-    st.stop()
-
-# --------------------------------------------------------------------------- #
-# Results table
-# --------------------------------------------------------------------------- #
-st.subheader("Matching lineups")
-
-# Colouring every cell is expensive, so only the top-N (by ROI) are rendered in
-# the interactive table; the full filtered set still feeds the basket / export.
-n_matches = len(filtered)
-hc1, hc2 = st.columns([3, 1])
-hc1.caption(
-    "Stats are colour-scaled green (good) → red (bad). Tick the checkboxes to "
-    "pick lineups, then **Add checked to basket** (which persists across filters)."
-)
-show_n = int(hc2.number_input(
-    "Rows shown", min_value=25, max_value=1000,
-    value=min(250, n_matches), step=25,
-    help="Top lineups by ROI rendered in the table. Lower this if sorting feels "
-    "slow; the full filtered set is still used by 'Add all filtered' and export.",
-))
-
-shown = filtered.head(show_n)
-view = make_view(shown)
-if n_matches > show_n:
-    st.caption(f"Showing the top **{show_n:,}** of **{n_matches:,}** matching lineups by ROI.")
-
-# Selection toolbar.
-tb1, tb2, tb3 = st.columns([1.6, 1.4, 3])
-add_clicked = tb1.button("➕ Add checked to basket", use_container_width=True)
-if tb2.button("🗑️ Clear basket", use_container_width=True):
-    st.session_state.selected = set()
-    st.rerun()
-tb3.metric("In export basket", f"{len(st.session_state.selected):,}")
-
-event = st.dataframe(
-    style_view(view, team_frame(shown)),
-    use_container_width=True,
-    hide_index=True,
-    height=460,
-    column_config=RESULTS_COLCONFIG,
-    on_select="rerun",
-    selection_mode="multi-row",
-    key="results_grid",
-)
-
-picked_rows = event.selection["rows"] if event and event.selection else []
-if add_clicked and picked_rows:
-    st.session_state.selected |= set(shown.iloc[picked_rows]["LineupNum"].tolist())
-    st.rerun()
-elif add_clicked:
-    st.toast("No rows checked — tick lineups in the table first.")
-
-# Quick add-all of the current filter (handy after narrowing a search).
-if st.button(f"➕ Add all {n_matches:,} filtered lineups to basket"):
-    st.session_state.selected |= set(filtered["LineupNum"].tolist())
-    st.rerun()
-
-# --------------------------------------------------------------------------- #
-# Lineup detail
-# --------------------------------------------------------------------------- #
-st.subheader("Lineup detail")
-sel = st.selectbox(
-    "Inspect a lineup",
-    filtered["LineupNum"].tolist(),
-    format_func=lambda n: f"Lineup {n}"
-    + (f"  —  ROI {table.loc[table.LineupNum == n, 'ROI'].iloc[0]:.1f}"
-       if "ROI" in table.columns else ""),
-)
-_SLOT_ORDER = {"SP": 0, "RP": 0, "P": 0, "C": 1, "1B": 2,
-               "2B": 3, "3B": 4, "SS": 5, "OF": 6}
-detail = players[players["LineupNum"] == sel].copy()
-detail["_o"] = detail["Position"].map(
-    lambda p: _SLOT_ORDER.get(str(p).split("/")[0], 9)
-)
-detail = detail.sort_values("_o")
-detail_view = detail[["Position", "FullName", "Team", "Salary", "Ownership"]].rename(
-    columns={"FullName": "Player", "Ownership": "Own %"}
-)
 
 
-def _team_row(row):
-    # Tint each row by its team so stacks are obvious at a glance.
-    bg = TEAM_COLORS.get(row["Team"], "#ffffff")
-    return [f"background-color: {bg}; color: #1a1a1a"] * len(row)
+def render_explore():
+    # --------------------------------------------------------------------------- #
+    # Summary metrics
+    # --------------------------------------------------------------------------- #
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Lineups", f"{len(filtered):,}", f"of {len(table):,}")
+    if not filtered.empty:
+        if "ROI" in filtered.columns:
+            c2.metric("Best ROI", f"{filtered['ROI'].max():.1f}")
+            c3.metric("Avg ROI", f"{filtered['ROI'].mean():.1f}")
+        if "WinRate" in filtered.columns:
+            c4.metric("Avg Win %", f"{filtered['WinRate'].mean():.2f}")
+        if "ITMRate" in filtered.columns:
+            c5.metric("Avg ITM %", f"{filtered['ITMRate'].mean():.1f}")
 
+    st.divider()
 
-st.dataframe(
-    detail_view.style.apply(_team_row, axis=1).format(
-        {"Salary": "${:,.0f}", "Own %": "{:.2f}"}
-    ),
-    use_container_width=True,
-    hide_index=True,
-)
+    if filtered.empty:
+        st.warning("No lineups match the current filters. Loosen them above.")
+        return
 
-# --------------------------------------------------------------------------- #
-# Export basket
-# --------------------------------------------------------------------------- #
-st.divider()
-st.subheader("🧺 Export basket")
+    # --------------------------------------------------------------------------- #
+    # Results table
+    # --------------------------------------------------------------------------- #
+    st.subheader("Matching lineups")
 
-selected_nums = st.session_state.selected
-if not selected_nums:
-    st.info(
-        "No lineups selected yet. Tick **✓ Select** on lineups above (selections "
-        "stay in the basket as you change filters), then export them here."
+    # Colouring every cell is expensive, so only the top-N (by ROI) are rendered in
+    # the interactive table; the full filtered set still feeds the basket / export.
+    n_matches = len(filtered)
+    hc1, hc2 = st.columns([3, 1])
+    hc1.caption(
+        "Stats are colour-scaled green (good) → red (bad). Tick the checkboxes to "
+        "pick lineups, then **Add checked to basket** (which persists across filters)."
     )
-    st.stop()
+    show_n = int(hc2.number_input(
+        "Rows shown", min_value=25, max_value=1000,
+        value=min(250, n_matches), step=25,
+        help="Top lineups by ROI rendered in the table. Lower this if sorting feels "
+        "slow; the full filtered set is still used by 'Add all filtered' and export.",
+    ))
 
-# Show the basket (all selected lineups, regardless of the current filter),
-# sorted by ROI, with a control to remove individual lineups.
-basket = table[table["LineupNum"].isin(selected_nums)].copy()
-if "ROI" in basket.columns:
-    basket = basket.sort_values("ROI", ascending=False, na_position="last")
+    shown = filtered.head(show_n)
+    view = make_view(shown)
+    if n_matches > show_n:
+        st.caption(f"Showing the top **{show_n:,}** of **{n_matches:,}** matching lineups by ROI.")
 
-basket_view = make_view(basket)
-st.dataframe(
-    style_view(basket_view, team_frame(basket)),
-    use_container_width=True, hide_index=True, height=240,
-    column_config=RESULTS_COLCONFIG,
-)
+    # Selection toolbar.
+    tb1, tb2, tb3 = st.columns([1.6, 1.4, 3])
+    add_clicked = tb1.button("➕ Add checked to basket", use_container_width=True)
+    if tb2.button("🗑️ Clear basket", use_container_width=True):
+        st.session_state.selected = set()
+        st.rerun()
+    tb3.metric("In export basket", f"{len(st.session_state.selected):,}")
 
-rc1, rc2 = st.columns([3, 1])
-to_remove = rc1.multiselect(
-    "Remove specific lineups from the basket",
-    sorted(selected_nums),
-    help="Removes only the chosen lineups; the rest stay selected.",
-)
-if rc2.button("Remove", use_container_width=True) and to_remove:
-    st.session_state.selected -= set(to_remove)
-    st.rerun()
+    event = st.dataframe(
+        style_view(view, team_frame(shown)),
+        use_container_width=True,
+        hide_index=True,
+        height=460,
+        column_config=RESULTS_COLCONFIG,
+        on_select="rerun",
+        selection_mode="multi-row",
+        key="results_grid",
+    )
+
+    picked_rows = event.selection["rows"] if event and event.selection else []
+    if add_clicked and picked_rows:
+        st.session_state.selected |= set(shown.iloc[picked_rows]["LineupNum"].tolist())
+        st.rerun()
+    elif add_clicked:
+        st.toast("No rows checked — tick lineups in the table first.")
+
+    # Quick add-all of the current filter (handy after narrowing a search).
+    if st.button(f"➕ Add all {n_matches:,} filtered lineups to basket"):
+        st.session_state.selected |= set(filtered["LineupNum"].tolist())
+        st.rerun()
+
+    # --------------------------------------------------------------------------- #
+    # Lineup detail
+    # --------------------------------------------------------------------------- #
+    st.subheader("Lineup detail")
+    sel = st.selectbox(
+        "Inspect a lineup",
+        filtered["LineupNum"].tolist(),
+        format_func=lambda n: f"Lineup {n}"
+        + (f"  —  ROI {table.loc[table.LineupNum == n, 'ROI'].iloc[0]:.1f}"
+           if "ROI" in table.columns else ""),
+    )
+    _SLOT_ORDER = {"SP": 0, "RP": 0, "P": 0, "C": 1, "1B": 2,
+                   "2B": 3, "3B": 4, "SS": 5, "OF": 6}
+    detail = players[players["LineupNum"] == sel].copy()
+    detail["_o"] = detail["Position"].map(
+        lambda p: _SLOT_ORDER.get(str(p).split("/")[0], 9)
+    )
+    detail = detail.sort_values("_o")
+    detail_view = detail[["Position", "FullName", "Team", "Salary", "Ownership"]].rename(
+        columns={"FullName": "Player", "Ownership": "Own %"}
+    )
+
+
+    def _team_row(row):
+        # Tint each row by its team so stacks are obvious at a glance.
+        bg = TEAM_COLORS.get(row["Team"], "#ffffff")
+        return [f"background-color: {bg}; color: #1a1a1a"] * len(row)
+
+
+    st.dataframe(
+        detail_view.style.apply(_team_row, axis=1).format(
+            {"Salary": "${:,.0f}", "Own %": "{:.2f}"}
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    # --------------------------------------------------------------------------- #
+    # Export basket
+    # --------------------------------------------------------------------------- #
+    st.divider()
+    st.subheader("🧺 Export basket")
+
+    selected_nums = st.session_state.selected
+    if not selected_nums:
+        st.info(
+            "No lineups selected yet. Tick **✓ Select** on lineups above (selections "
+            "stay in the basket as you change filters), then export them here."
+        )
+        return
+
+    # Show the basket (all selected lineups, regardless of the current filter),
+    # sorted by ROI, with a control to remove individual lineups.
+    basket = table[table["LineupNum"].isin(selected_nums)].copy()
+    if "ROI" in basket.columns:
+        basket = basket.sort_values("ROI", ascending=False, na_position="last")
+
+    basket_view = make_view(basket)
+    st.dataframe(
+        style_view(basket_view, team_frame(basket)),
+        use_container_width=True, hide_index=True, height=240,
+        column_config=RESULTS_COLCONFIG,
+    )
+
+    rc1, rc2 = st.columns([3, 1])
+    to_remove = rc1.multiselect(
+        "Remove specific lineups from the basket",
+        sorted(selected_nums),
+        help="Removes only the chosen lineups; the rest stay selected.",
+    )
+    if rc2.button("Remove", use_container_width=True) and to_remove:
+        st.session_state.selected -= set(to_remove)
+        st.rerun()
+
+    # --------------------------------------------------------------------------- #
+    # Exposure — guard against being overweight on any one player / team
+    # --------------------------------------------------------------------------- #
+    st.markdown("#### 📊 Exposure across selected lineups")
+    n_sel = len(selected_nums)
+    ec1, ec2 = st.columns([2, 1])
+    target = ec1.slider(
+        "Max exposure target %", 5, 100, 50, 5,
+        help="Players/teams above this line are highlighted in red — a signal you "
+        "may be overweight.",
+    )
+    top_n = ec2.number_input("Show top N", min_value=5, max_value=200, value=30, step=5)
+
+    sel_players = players[players["LineupNum"].isin(selected_nums)]
+
+
+    def _exposure_chart(df, label_col, count_label):
+        """Sorted horizontal bar chart of exposure %, with a target rule line."""
+        shown = df.head(int(top_n))
+        bars = (
+            alt.Chart(shown)
+            .mark_bar()
+            .encode(
+                x=alt.X("Exposure:Q", title="Exposure %", scale=alt.Scale(domain=[0, 100])),
+                y=alt.Y(f"{label_col}:N", sort="-x", title=None),
+                color=alt.condition(
+                    alt.datum.Exposure > target,
+                    alt.value("#e45756"),  # red = over target
+                    alt.value("#4c78a8"),
+                ),
+                tooltip=[
+                    alt.Tooltip(f"{label_col}:N", title=count_label),
+                    alt.Tooltip("Lineups:Q"),
+                    alt.Tooltip("Exposure:Q", title="Exposure %", format=".1f"),
+                ],
+            )
+            .properties(height=max(150, 18 * len(shown)))
+        )
+        rule = (
+            alt.Chart(pd.DataFrame({"t": [target]}))
+            .mark_rule(color="#999", strokeDash=[4, 4])
+            .encode(x="t:Q")
+        )
+        st.altair_chart(bars + rule, use_container_width=True)
+
+
+    tab_players, tab_teams = st.tabs(["Players", "Teams"])
+
+    with tab_players:
+        pe = (
+            sel_players.groupby(["FullName", "Team"])["LineupNum"]
+            .nunique()
+            .reset_index(name="Lineups")
+        )
+        pe["Exposure"] = (100 * pe["Lineups"] / n_sel).round(1)
+        pe = pe.sort_values("Exposure", ascending=False).reset_index(drop=True)
+        over = pe[pe["Exposure"] > target]
+        if not over.empty:
+            st.caption(
+                f"⚠️ {len(over)} player(s) above your {target}% target: "
+                + ", ".join(f"{r.FullName} ({r.Exposure:.0f}%)" for r in over.head(8).itertuples())
+                + ("…" if len(over) > 8 else "")
+            )
+        _exposure_chart(pe, "FullName", "Player")
+
+    with tab_teams:
+        te = (
+            sel_players.groupby("Team")["LineupNum"]
+            .nunique()
+            .reset_index(name="Lineups")
+        )
+        te["Exposure"] = (100 * te["Lineups"] / n_sel).round(1)
+        te = te.sort_values("Exposure", ascending=False).reset_index(drop=True)
+        st.caption("Share of selected lineups containing at least one player from each team.")
+        _exposure_chart(te, "Team", "Team")
+
+    # --------------------------------------------------------------------------- #
+    # Export the selected lineups
+    # --------------------------------------------------------------------------- #
+    st.markdown("#### ⬇️ Export selected lineups")
+    export_nums = basket["LineupNum"].tolist()  # ROI-sorted
+    if len(export_nums) > 500:
+        st.warning(
+            f"{len(export_nums)} lineups selected — DraftKings allows 500 per file. "
+            "Only the top 500 by ROI will be exported."
+        )
+        export_nums = export_nums[:500]
+
+    upload_df, skipped = dd.build_dk_upload(players, export_nums, slots, valid_ids)
+    if skipped:
+        st.warning(
+            f"{len(skipped)} selected lineup(s) had players whose IDs aren't in the "
+            f"current template (these export with blank slots). Upload a matching DK "
+            f"template above to fix. Lineups: {skipped[:10]}{'…' if len(skipped) > 10 else ''}"
+        )
+
+    e1, e2 = st.columns(2)
+    e1.download_button(
+        f"📤 Export Lineups — DK upload ({len(export_nums)})",
+        data=upload_df.to_csv(index=False).encode("utf-8"),
+        file_name="dk_upload_lineups.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+    e2.download_button(
+        "Export selected summary (with stats)",
+        data=basket_view.to_csv(index=False).encode("utf-8"),
+        file_name="selected_lineup_summary.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
 
 # --------------------------------------------------------------------------- #
-# Exposure — guard against being overweight on any one player / team
+# Summary analytics — aggregate breakdowns across a population of lineups
 # --------------------------------------------------------------------------- #
-st.markdown("#### 📊 Exposure across selected lineups")
-n_sel = len(selected_nums)
-ec1, ec2 = st.columns([2, 1])
-target = ec1.slider(
-    "Max exposure target %", 5, 100, 50, 5,
-    help="Players/teams above this line are highlighted in red — a signal you "
-    "may be overweight.",
-)
-top_n = ec2.number_input("Show top N", min_value=5, max_value=200, value=30, step=5)
-
-sel_players = players[players["LineupNum"].isin(selected_nums)]
-
-
-def _exposure_chart(df, label_col, count_label):
-    """Sorted horizontal bar chart of exposure %, with a target rule line."""
-    shown = df.head(int(top_n))
-    bars = (
+def _hbar(df, label, value, value_title, top=40, color="#4c78a8"):
+    """Horizontal bar chart sorted by value (frequency-style breakdowns)."""
+    shown = df.head(top)
+    chart = (
         alt.Chart(shown)
-        .mark_bar()
+        .mark_bar(color=color)
         .encode(
-            x=alt.X("Exposure:Q", title="Exposure %", scale=alt.Scale(domain=[0, 100])),
-            y=alt.Y(f"{label_col}:N", sort="-x", title=None),
-            color=alt.condition(
-                alt.datum.Exposure > target,
-                alt.value("#e45756"),  # red = over target
-                alt.value("#4c78a8"),
-            ),
-            tooltip=[
-                alt.Tooltip(f"{label_col}:N", title=count_label),
-                alt.Tooltip("Lineups:Q"),
-                alt.Tooltip("Exposure:Q", title="Exposure %", format=".1f"),
-            ],
+            x=alt.X(f"{value}:Q", title=value_title),
+            y=alt.Y(f"{label}:N", sort="-x", title=None),
+            tooltip=list(df.columns),
         )
-        .properties(height=max(150, 18 * len(shown)))
+        .properties(height=max(140, 20 * len(shown)))
     )
-    rule = (
-        alt.Chart(pd.DataFrame({"t": [target]}))
-        .mark_rule(color="#999", strokeDash=[4, 4])
-        .encode(x="t:Q")
-    )
-    st.altair_chart(bars + rule, use_container_width=True)
+    st.altair_chart(chart, use_container_width=True)
 
 
-tab_players, tab_teams = st.tabs(["Players", "Teams"])
-
-with tab_players:
-    pe = (
-        sel_players.groupby(["FullName", "Team"])["LineupNum"]
-        .nunique()
-        .reset_index(name="Lineups")
-    )
-    pe["Exposure"] = (100 * pe["Lineups"] / n_sel).round(1)
-    pe = pe.sort_values("Exposure", ascending=False).reset_index(drop=True)
-    over = pe[pe["Exposure"] > target]
-    if not over.empty:
-        st.caption(
-            f"⚠️ {len(over)} player(s) above your {target}% target: "
-            + ", ".join(f"{r.FullName} ({r.Exposure:.0f}%)" for r in over.head(8).itertuples())
-            + ("…" if len(over) > 8 else "")
+def _vbar(df, label, value, x_title, color="#54a24b"):
+    """Vertical bar chart over an ordinal category (distributions)."""
+    chart = (
+        alt.Chart(df)
+        .mark_bar(color=color)
+        .encode(
+            x=alt.X(f"{label}:O", title=x_title),
+            y=alt.Y(f"{value}:Q", title="Lineups"),
+            tooltip=list(df.columns),
         )
-    _exposure_chart(pe, "FullName", "Player")
-
-with tab_teams:
-    te = (
-        sel_players.groupby("Team")["LineupNum"]
-        .nunique()
-        .reset_index(name="Lineups")
     )
-    te["Exposure"] = (100 * te["Lineups"] / n_sel).round(1)
-    te = te.sort_values("Exposure", ascending=False).reset_index(drop=True)
-    st.caption("Share of selected lineups containing at least one player from each team.")
-    _exposure_chart(te, "Team", "Team")
+    st.altair_chart(chart, use_container_width=True)
+
+
+def _summary_population():
+    """Pick which lineups to summarise; returns (frame, count, label)."""
+    c1, c2 = st.columns([2, 1])
+    basis = c1.radio(
+        "Summarise", ["Top N by ROI", "Current filter", "All lineups"],
+        horizontal=True, key="sum_basis",
+    )
+    if basis == "All lineups":
+        return table, len(table), "all lineups"
+    if basis == "Current filter":
+        return filtered, len(filtered), "current filter"
+    n = int(c2.number_input(
+        "Top N", min_value=10, max_value=len(table),
+        value=min(200, len(table)), step=10, key="sum_topn",
+    ))
+    pop = table
+    if "ROI" in table.columns:
+        pop = table.sort_values("ROI", ascending=False, na_position="last")
+    return pop.head(n), min(n, len(table)), f"top {n} by ROI"
+
+
+def render_summary():
+    st.subheader("📊 Summary stats across lineups")
+    pop, n_pop, label = _summary_population()
+    if n_pop == 0:
+        st.info("No lineups in this population — adjust the filters or basis.")
+        return
+    st.caption(f"Breaking down **{n_pop:,}** lineups ({label}).")
+    pop_nums = set(pop["LineupNum"])
+    pop_players = players[players["LineupNum"].isin(pop_nums)]
+
+    t_players, t_stacks, t_teams = st.tabs(["Players", "Stacks", "Teams"])
+
+    # ---- Player frequency -------------------------------------------------- #
+    with t_players:
+        freq = (
+            pop_players.groupby(["FullName", "Team"])
+            .agg(Lineups=("LineupNum", "nunique"), AvgOwn=("Ownership", "mean"))
+            .reset_index()
+        )
+        freq["Freq %"] = (100 * freq["Lineups"] / n_pop).round(1)
+        freq["AvgOwn"] = freq["AvgOwn"].round(2)
+        freq = freq.sort_values("Lineups", ascending=False).reset_index(drop=True)
+        freq = freq.rename(columns={"FullName": "Player", "AvgOwn": "Avg Own %"})
+
+        topn = st.slider("Players shown", 10, 100, 30, 5, key="sum_players_n")
+        _hbar(freq[["Player", "Freq %", "Lineups"]], "Player", "Freq %",
+              "Appears in % of lineups", top=topn)
+        st.dataframe(
+            freq[["Player", "Team", "Lineups", "Freq %", "Avg Own %"]],
+            use_container_width=True, hide_index=True, height=320,
+        )
+        st.download_button(
+            "Download player frequency CSV",
+            data=freq.to_csv(index=False).encode("utf-8"),
+            file_name="player_frequency.csv", mime="text/csv",
+        )
+
+    # ---- Stack breakdowns -------------------------------------------------- #
+    with t_stacks:
+        sc1, sc2 = st.columns(2)
+
+        with sc1:
+            st.markdown("**Stack pattern frequency**")
+            pat = pop["StackPattern"].value_counts().reset_index()
+            pat.columns = ["Pattern", "Lineups"]
+            pat["%"] = (100 * pat["Lineups"] / n_pop).round(1)
+            _hbar(pat, "Pattern", "Lineups", "Lineups", top=20, color="#b279a2")
+
+            st.markdown("**Primary stack size**")
+            psize = (
+                pop["PrimaryStackSize"].value_counts().sort_index().reset_index()
+            )
+            psize.columns = ["Size", "Lineups"]
+            _vbar(psize, "Size", "Lineups", "Primary stack size")
+
+        with sc2:
+            st.markdown("**Primary stack team**")
+            pteam = pop["PrimaryStackTeam"].replace("", "—").value_counts().reset_index()
+            pteam.columns = ["Team", "Lineups"]
+            pteam["%"] = (100 * pteam["Lineups"] / n_pop).round(1)
+            _hbar(pteam, "Team", "Lineups", "Lineups", top=20, color="#e45756")
+
+            st.markdown("**Team stacked (2+ hitters)**")
+            stacked = Counter()
+            for tc in pop["TeamCounts"]:
+                for team, cnt in tc.items():
+                    if cnt >= 2:
+                        stacked[team] += 1
+            sdf = pd.DataFrame(
+                sorted(stacked.items(), key=lambda kv: -kv[1]),
+                columns=["Team", "Lineups"],
+            )
+            if not sdf.empty:
+                sdf["%"] = (100 * sdf["Lineups"] / n_pop).round(1)
+                _hbar(sdf, "Team", "Lineups", "Lineups stacking team", top=20,
+                      color="#4c78a8")
+
+    # ---- Team breakdown ---------------------------------------------------- #
+    with t_teams:
+        team_tbl = (
+            pop_players.groupby("Team")
+            .agg(RosterSpots=("LineupNum", "count"),
+                 Lineups=("LineupNum", "nunique"))
+            .reset_index()
+        )
+        team_tbl["Spots/Lineup"] = (team_tbl["RosterSpots"] / n_pop).round(2)
+        team_tbl["Lineup %"] = (100 * team_tbl["Lineups"] / n_pop).round(1)
+        team_tbl = team_tbl.sort_values("RosterSpots", ascending=False).reset_index(drop=True)
+
+        st.caption("Total roster spots (player appearances) and how many lineups "
+                   "include each team.")
+        _hbar(team_tbl, "Team", "RosterSpots", "Total roster spots", top=30,
+              color="#72b7b2")
+        st.dataframe(
+            team_tbl[["Team", "RosterSpots", "Spots/Lineup", "Lineups", "Lineup %"]],
+            use_container_width=True, hide_index=True,
+        )
+
 
 # --------------------------------------------------------------------------- #
-# Export the selected lineups
+# Tabs: explore/build vs. summary analytics
 # --------------------------------------------------------------------------- #
-st.markdown("#### ⬇️ Export selected lineups")
-export_nums = basket["LineupNum"].tolist()  # ROI-sorted
-if len(export_nums) > 500:
-    st.warning(
-        f"{len(export_nums)} lineups selected — DraftKings allows 500 per file. "
-        "Only the top 500 by ROI will be exported."
-    )
-    export_nums = export_nums[:500]
+tab_explore, tab_summary = st.tabs(["🔍 Explore & Build", "📊 Summary Stats"])
 
-upload_df, skipped = dd.build_dk_upload(players, export_nums, slots, valid_ids)
-if skipped:
-    st.warning(
-        f"{len(skipped)} selected lineup(s) had players whose IDs aren't in the "
-        f"current template (these export with blank slots). Upload a matching DK "
-        f"template above to fix. Lineups: {skipped[:10]}{'…' if len(skipped) > 10 else ''}"
-    )
+with tab_summary:
+    render_summary()
 
-e1, e2 = st.columns(2)
-e1.download_button(
-    f"📤 Export Lineups — DK upload ({len(export_nums)})",
-    data=upload_df.to_csv(index=False).encode("utf-8"),
-    file_name="dk_upload_lineups.csv",
-    mime="text/csv",
-    use_container_width=True,
-)
-e2.download_button(
-    "Export selected summary (with stats)",
-    data=basket_view.to_csv(index=False).encode("utf-8"),
-    file_name="selected_lineup_summary.csv",
-    mime="text/csv",
-    use_container_width=True,
-)
+with tab_explore:
+    render_explore()
