@@ -348,9 +348,11 @@ sel = st.selectbox(
     + (f"  —  ROI {table.loc[table.LineupNum == n, 'ROI'].iloc[0]:.1f}"
        if "ROI" in table.columns else ""),
 )
+_SLOT_ORDER = {"SP": 0, "RP": 0, "P": 0, "C": 1, "1B": 2,
+               "2B": 3, "3B": 4, "SS": 5, "OF": 6}
 detail = players[players["LineupNum"] == sel].copy()
 detail["_o"] = detail["Position"].map(
-    lambda p: dd.SLOT_DISPLAY_ORDER.get(str(p).split("/")[0], 9)
+    lambda p: _SLOT_ORDER.get(str(p).split("/")[0], 9)
 )
 detail = detail.sort_values("_o")
 detail_view = detail[["Position", "FullName", "Team", "Salary", "Ownership"]].rename(
