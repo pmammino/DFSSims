@@ -59,6 +59,11 @@ all_player_names = sorted(players["FullName"].unique())
 all_teams = sorted(players["Team"].unique())
 all_patterns = sorted(table["StackPattern"].unique())
 
+# Persistent export basket: lineup numbers the user has selected. This survives
+# filter changes and reruns until the user unchecks or clears them.
+if "selected" not in st.session_state:
+    st.session_state.selected = set()
+
 # --------------------------------------------------------------------------- #
 # Sidebar — DK upload template
 # --------------------------------------------------------------------------- #
@@ -225,19 +230,49 @@ view = filtered[list(display_cols)].rename(columns=display_cols).copy()
 view["Players"] = filtered["Players"].apply(lambda ps: ", ".join(ps))
 
 st.subheader("Matching lineups")
-st.dataframe(
-    view,
+st.caption(
+    "Tick **✓ Select** to add a lineup to your export basket. Selections persist "
+    "across filter changes — unticking removes them (or use the controls below)."
+)
+
+# Selection toolbar (mutates the basket explicitly, above the grid).
+tb1, tb2, tb3 = st.columns([1.4, 1.4, 3])
+if tb1.button("➕ Add all filtered", use_container_width=True):
+    st.session_state.selected |= set(filtered["LineupNum"].tolist())
+    st.rerun()
+if tb2.button("🗑️ Clear all selected", use_container_width=True):
+    st.session_state.selected = set()
+    st.rerun()
+tb3.metric("In export basket", f"{len(st.session_state.selected):,}")
+
+# Editable grid: a Select checkbox column, everything else read-only.
+grid = view.copy()
+grid.insert(0, "✓ Select", grid["Lineup #"].isin(st.session_state.selected))
+edited = st.data_editor(
+    grid,
     use_container_width=True,
     hide_index=True,
-    height=480,
+    height=460,
+    disabled=[c for c in grid.columns if c != "✓ Select"],
     column_config={
+        "✓ Select": st.column_config.CheckboxColumn(),
         "ROI": st.column_config.NumberColumn(format="%.1f"),
         "Win %": st.column_config.NumberColumn(format="%.2f"),
         "ITM %": st.column_config.NumberColumn(format="%.1f"),
         "Top10 %": st.column_config.NumberColumn(format="%.2f"),
         "Salary": st.column_config.NumberColumn(format="$%d"),
     },
+    key="results_grid",
 )
+
+# Reconcile the basket from the grid: for the rows currently visible, the
+# checkbox state is authoritative; selections outside the filter are untouched.
+visible = set(edited["Lineup #"])
+checked = set(edited.loc[edited["✓ Select"], "Lineup #"])
+new_selected = (st.session_state.selected - visible) | checked
+if new_selected != st.session_state.selected:
+    st.session_state.selected = new_selected
+    st.rerun()
 
 # --------------------------------------------------------------------------- #
 # Lineup detail
@@ -267,39 +302,80 @@ st.dataframe(
 )
 
 # --------------------------------------------------------------------------- #
-# Export to DraftKings upload format
+# Export basket
 # --------------------------------------------------------------------------- #
 st.divider()
-st.subheader("⬇️ Export lineups (DraftKings upload format)")
+st.subheader("🧺 Export basket")
 
-max_export = min(500, len(filtered))  # DK allows up to 500 lineups per file.
-n_export = st.number_input(
-    "How many of the top-ROI matching lineups to export?",
-    min_value=1, max_value=max_export, value=max_export, step=1,
+selected_nums = st.session_state.selected
+if not selected_nums:
+    st.info(
+        "No lineups selected yet. Tick **✓ Select** on lineups above (selections "
+        "stay in the basket as you change filters), then export them here."
+    )
+    st.stop()
+
+# Show the basket (all selected lineups, regardless of the current filter),
+# sorted by ROI, with a control to remove individual lineups.
+basket = table[table["LineupNum"].isin(selected_nums)].copy()
+if "ROI" in basket.columns:
+    basket = basket.sort_values("ROI", ascending=False, na_position="last")
+
+basket_view = basket[list(display_cols)].rename(columns=display_cols).copy()
+basket_view["Players"] = basket["Players"].apply(lambda ps: ", ".join(ps))
+st.dataframe(
+    basket_view, use_container_width=True, hide_index=True, height=240,
+    column_config={
+        "ROI": st.column_config.NumberColumn(format="%.1f"),
+        "Win %": st.column_config.NumberColumn(format="%.2f"),
+        "ITM %": st.column_config.NumberColumn(format="%.1f"),
+        "Top10 %": st.column_config.NumberColumn(format="%.2f"),
+        "Salary": st.column_config.NumberColumn(format="$%d"),
+    },
 )
-to_export = filtered["LineupNum"].head(int(n_export)).tolist()
 
-upload_df, skipped = dd.build_dk_upload(players, to_export, slots, valid_ids)
+rc1, rc2 = st.columns([3, 1])
+to_remove = rc1.multiselect(
+    "Remove specific lineups from the basket",
+    sorted(selected_nums),
+    help="Removes only the chosen lineups; the rest stay selected.",
+)
+if rc2.button("Remove", use_container_width=True) and to_remove:
+    st.session_state.selected -= set(to_remove)
+    st.rerun()
+
+# --------------------------------------------------------------------------- #
+# Export the selected lineups
+# --------------------------------------------------------------------------- #
+st.markdown("#### ⬇️ Export selected lineups")
+export_nums = basket["LineupNum"].tolist()  # ROI-sorted
+if len(export_nums) > 500:
+    st.warning(
+        f"{len(export_nums)} lineups selected — DraftKings allows 500 per file. "
+        "Only the top 500 by ROI will be exported."
+    )
+    export_nums = export_nums[:500]
+
+upload_df, skipped = dd.build_dk_upload(players, export_nums, slots, valid_ids)
 if skipped:
     st.warning(
-        f"{len(skipped)} lineup(s) had players whose IDs aren't in the current "
-        f"template (these export with blank slots). Upload a matching DK template "
-        f"to fix. Lineups: {skipped[:10]}{'…' if len(skipped) > 10 else ''}"
+        f"{len(skipped)} selected lineup(s) had players whose IDs aren't in the "
+        f"current template (these export with blank slots). Upload a matching DK "
+        f"template above to fix. Lineups: {skipped[:10]}{'…' if len(skipped) > 10 else ''}"
     )
 
-csv_bytes = upload_df.to_csv(index=False).encode("utf-8")
-st.download_button(
-    "Download DraftKings upload CSV",
-    data=csv_bytes,
+e1, e2 = st.columns(2)
+e1.download_button(
+    f"📤 Export Lineups — DK upload ({len(export_nums)})",
+    data=upload_df.to_csv(index=False).encode("utf-8"),
     file_name="dk_upload_lineups.csv",
     mime="text/csv",
+    use_container_width=True,
 )
-
-# Also offer the full filtered summary (with stats) as a plain CSV.
-summary_csv = view.to_csv(index=False).encode("utf-8")
-st.download_button(
-    "Download filtered summary CSV (with stats)",
-    data=summary_csv,
-    file_name="lineup_summary.csv",
+e2.download_button(
+    "Export selected summary (with stats)",
+    data=basket_view.to_csv(index=False).encode("utf-8"),
+    file_name="selected_lineup_summary.csv",
     mime="text/csv",
+    use_container_width=True,
 )

@@ -29,11 +29,14 @@ The two sim files join on `LineupNum`. Each lineup is a classic MLB roster:
 - **Lineup detail** view (player-by-player, sorted by roster slot, with ownership).
 - **Upload Lineup Template** button — swap in a fresh `DKSalaries.csv` whenever
   the DraftKings export changes; its player IDs and slots drive the export.
-- **Export**:
-  - **DraftKings upload CSV** — the top-ROI matching lineups, with each
-    (possibly multi-position) player assigned to a roster slot via bipartite
-    matching, IDs in DK slot order (max 500 lineups per file).
-  - **Filtered summary CSV** — the filtered lineups with their stats.
+- **Export basket** — tick **✓ Select** on any lineups to add them to a
+  persistent basket. Selections **survive filter changes** so you can build a
+  set across multiple queries; untick a row, remove specific lineups, or clear
+  all. Only the basket is exported, on demand:
+  - **DraftKings upload CSV** — the selected lineups (ROI-sorted, max 500), with
+    each (possibly multi-position) player assigned to a roster slot via
+    bipartite matching and IDs in DK slot order.
+  - **Selected summary CSV** — the selected lineups with their stats.
 
 ## Run
 
