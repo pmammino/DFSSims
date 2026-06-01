@@ -134,8 +134,17 @@ def make_view(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(data)
 
 
-def style_view(view: pd.DataFrame):
-    """Apply good/bad colouring to the stat columns and number formatting.
+def team_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Team-per-slot frame aligned to make_view's player columns (for colouring)."""
+    return pd.DataFrame({c: df[f"{c}__team"].values for c in PLAYER_SLOT_COLS})
+
+
+def _team_cell(team) -> str:
+    return f"background-color: {TEAM_COLORS.get(team, '#ffffff')}; color: #1a1a1a"
+
+
+def style_view(view: pd.DataFrame, teams: pd.DataFrame | None = None):
+    """Colour the stat columns (good/bad) and tint each player cell by team.
 
     Per-cell colouring is costly, so it is skipped above STYLE_ROW_LIMIT rows
     (number formatting is always applied) to keep the table responsive.
@@ -145,6 +154,9 @@ def style_view(view: pd.DataFrame):
     if len(view) <= STYLE_ROW_LIMIT:
         cols = [c for c in STAT_COLS if c in view.columns and view[c].notna().any()]
         styler = styler.apply(_gradient, subset=cols)
+        if teams is not None:
+            team_css = teams.map(_team_cell)
+            styler = styler.apply(lambda _: team_css, axis=None, subset=PLAYER_SLOT_COLS)
     return styler
 
 
@@ -191,7 +203,7 @@ with st.expander("⚙️ Lineup template (DraftKings upload)", expanded=False):
 # --------------------------------------------------------------------------- #
 # Filters — across the top so the table can use the full width
 # --------------------------------------------------------------------------- #
-with st.expander("🔍 Filters", expanded=True):
+with st.expander("🔍 Filters", expanded=False):
     fc1, fc2, fc3, fc4 = st.columns(4)
 
     with fc1:
@@ -346,7 +358,7 @@ if tb2.button("🗑️ Clear basket", use_container_width=True):
 tb3.metric("In export basket", f"{len(st.session_state.selected):,}")
 
 event = st.dataframe(
-    style_view(view),
+    style_view(view, team_frame(shown)),
     use_container_width=True,
     hide_index=True,
     height=460,
@@ -427,7 +439,8 @@ if "ROI" in basket.columns:
 
 basket_view = make_view(basket)
 st.dataframe(
-    style_view(basket_view), use_container_width=True, hide_index=True, height=240,
+    style_view(basket_view, team_frame(basket)),
+    use_container_width=True, hide_index=True, height=240,
     column_config=RESULTS_COLCONFIG,
 )
 

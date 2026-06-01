@@ -25,13 +25,14 @@ The two sim files join on `LineupNum`. Each lineup is a classic MLB roster:
   - **Teams in pool** (restrict to a set of teams)
   - **Total salary** range
   - **Minimum ROI / Win % / ITM % / Top 10 %**
-- **Filters across the top** of the page (in a collapsible panel) so the lineup
-  table can use the full window width.
+- **Filters across the top** of the page (in a collapsible panel, collapsed by
+  default) so the lineup table can use the full window width.
 - **Results table** sorted by highest ROI. Each lineup is shown with **one column
   per roster position** (P, P, C, 1B, 2B, 3B, SS, OF, OF, OF — players assigned to
   slots via bipartite matching), followed by the four summary stats —
   **ROI, Win Rate, ITM%, Top 10%** — each colour-scaled green (good) → red (bad),
-  plus a readable stack label. To stay responsive, only the top **N** rows
+  plus a readable stack label. Each player cell is tinted by its team colour so
+  stacks stand out across the row. To stay responsive, only the top **N** rows
   (default 250, adjustable) are rendered with colouring; the full filtered set
   still drives "Add all filtered" and export.
 - **Lineup detail** view (player-by-player, ordered by roster slot, with rows

@@ -135,8 +135,14 @@ def build_lineup_table(lineups: pd.DataFrame, results: pd.DataFrame) -> pd.DataF
         eligs = [(idx, _eligible_slots(r["Position"])) for idx, r in grp.iterrows()]
         assigned = _match_to_slots(eligs, CLASSIC_SLOTS)
         name_by_idx = grp["FullName"].to_dict()
+        team_by_idx = grp["Team"].to_dict()
         slot_players = {
             label: (name_by_idx.get(key) if key is not None else None)
+            for label, key in zip(SLOT_LABELS, assigned)
+        }
+        # Parallel team-per-slot columns ("<label>__team") for cell colouring.
+        slot_teams = {
+            f"{label}__team": (team_by_idx.get(key) if key is not None else None)
             for label, key in zip(SLOT_LABELS, assigned)
         }
 
@@ -150,6 +156,7 @@ def build_lineup_table(lineups: pd.DataFrame, results: pd.DataFrame) -> pd.DataF
                 "TotalOwnership": round(float(grp["Ownership"].sum()), 2),
                 "TeamCounts": dict(team_counts),
                 **slot_players,
+                **slot_teams,
                 **info,
             }
         )
