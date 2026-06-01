@@ -69,6 +69,8 @@ Aggregate breakdowns over a chosen population — **Top N by ROI** (e.g. the bes
   frequency, primary-stack-size distribution, and how often each team is
   stacked (2+ hitters).
 - **Teams** — total roster spots (player appearances) and lineup count per team.
+- **Distributions** — histograms of total lineup salary and total ownership
+  across the population, with min / median / mean / max summaries.
 
 ## Run
 

@@ -603,6 +603,28 @@ def _vbar(df, label, value, x_title, color="#54a24b"):
     st.altair_chart(chart, use_container_width=True)
 
 
+def _histogram(series, x_title, step, fmt=",.0f", color="#4c78a8"):
+    """Histogram of a numeric series binned at a fixed step width."""
+    df = pd.DataFrame({x_title: pd.to_numeric(series, errors="coerce").dropna()})
+    chart = (
+        alt.Chart(df)
+        .mark_bar(color=color)
+        .encode(
+            x=alt.X(f"{x_title}:Q", bin=alt.Bin(step=step), title=x_title),
+            y=alt.Y("count():Q", title="Lineups"),
+            tooltip=[alt.Tooltip(f"{x_title}:Q", bin=alt.Bin(step=step), format=fmt),
+                     alt.Tooltip("count():Q", title="Lineups")],
+        )
+    )
+    st.altair_chart(chart, use_container_width=True)
+    s = df[x_title]
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Min", f"{s.min():{fmt}}")
+    m2.metric("Median", f"{s.median():{fmt}}")
+    m3.metric("Mean", f"{s.mean():{fmt}}")
+    m4.metric("Max", f"{s.max():{fmt}}")
+
+
 def _summary_population():
     """Pick which lineups to summarise; returns (frame, count, label)."""
     c1, c2 = st.columns([2, 1])
@@ -634,7 +656,9 @@ def render_summary():
     pop_nums = set(pop["LineupNum"])
     pop_players = players[players["LineupNum"].isin(pop_nums)]
 
-    t_players, t_stacks, t_teams = st.tabs(["Players", "Stacks", "Teams"])
+    t_players, t_stacks, t_teams, t_dist = st.tabs(
+        ["Players", "Stacks", "Teams", "Distributions"]
+    )
 
     # ---- Player frequency -------------------------------------------------- #
     with t_players:
@@ -721,6 +745,18 @@ def render_summary():
             team_tbl[["Team", "RosterSpots", "Spots/Lineup", "Lineups", "Lineup %"]],
             use_container_width=True, hide_index=True,
         )
+
+    # ---- Salary & ownership distributions ---------------------------------- #
+    with t_dist:
+        dc1, dc2 = st.columns(2)
+        with dc1:
+            st.markdown("**Total salary**")
+            _histogram(pop["TotalSalary"], "Total salary", step=500,
+                       fmt=",.0f", color="#4c78a8")
+        with dc2:
+            st.markdown("**Total ownership (sum of player own %)**")
+            _histogram(pop["TotalOwnership"], "Total ownership %", step=10,
+                       fmt=".0f", color="#e45756")
 
 
 # --------------------------------------------------------------------------- #
