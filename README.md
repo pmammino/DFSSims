@@ -18,9 +18,9 @@ The two sim files join on `LineupNum`. Each lineup is a classic MLB roster:
 
 ## Features
 
-The app has two top-level tabs: **🔍 Explore & Build** (search, select, and
-export lineups) and **📊 Summary Stats** (aggregate breakdowns across a chosen
-population of lineups).
+The app has three top-level tabs: **🔍 Explore & Build** (search, select, and
+export lineups), **📊 Summary Stats** (aggregate breakdowns across a chosen
+population of lineups), and **🗓️ Slate** (matchup / pitcher context).
 
 ### Explore & Build
 
@@ -80,6 +80,21 @@ Aggregate breakdowns over a chosen population — **Top N by ROI** (e.g. the bes
 - **Teams** — total roster spots (player appearances) and lineup count per team.
 - **Distributions** — histograms of total lineup salary and total ownership
   across the population, with min / median / mean / max summaries.
+
+### Slate
+
+Slate context derived from the DraftKings template (`Game Info`, `TeamAbbrev`,
+`AvgPointsPerGame`, pitcher rows) and tied to the lineups:
+
+- **Matchups** — each game with start time, both probable starting pitchers, and
+  a projection-based game total (sorted high → low as an over/under proxy), plus
+  how often each team appears in the sim lineups.
+- **Probable starting pitchers** — each team's highest-salaried SP with salary,
+  projected points, and lineup exposure.
+
+Projections come from DraftKings' AvgPointsPerGame (an offense proxy, **not** a
+Vegas line). Real over/unders and confirmed starters require a live odds/MLB
+feed; a hook (`ODDS_API_KEY`) is in place for wiring one up to a real slate.
 
 ## Run
 

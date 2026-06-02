@@ -14,6 +14,7 @@ import streamlit as st
 
 import dfs_data as dd
 import nl_filter as nf
+import slate_context as sc
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LINEUPS_CSV = os.path.join(HERE, "sim_lineups.csv")
@@ -201,9 +202,9 @@ with st.expander("⚙️ Lineup template (DraftKings upload)", expanded=False):
         valid_ids = set(dk_players["ID"].astype(str))
     except Exception as exc:  # noqa: BLE001
         st.error(f"Template error: {exc}")
-        slots, valid_ids = (
+        slots, valid_ids, dk_players = (
             ["P", "P", "C", "1B", "2B", "3B", "SS", "OF", "OF", "OF"],
-            None,
+            None, None,
         )
 
 # --------------------------------------------------------------------------- #
@@ -854,13 +855,79 @@ def render_summary():
                        fmt=".0f", color="#e45756")
 
 
+def render_slate():
+    st.subheader("🗓️ Slate overview")
+    if dk_players is None:
+        st.info("No DK template loaded — upload a DKSalaries.csv above to see slate "
+                "context (matchups, starting pitchers, projections).")
+        return
+    try:
+        games, pitchers, meta = sc.build_slate(dk_players, players, len(table))
+    except Exception as exc:  # noqa: BLE001
+        st.warning(f"Couldn't derive slate context from the template: {exc}")
+        return
+    if games.empty:
+        st.info("The template has no parseable game info for this slate.")
+        return
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Games", meta["n_games"])
+    m2.metric("Teams", meta["n_teams"])
+    m3.metric("Slate date", meta["date"])
+    st.caption(
+        "Projections come from DraftKings' AvgPointsPerGame — an offense proxy, "
+        "**not** a Vegas line. Probable starters are each team's highest-salaried "
+        "SP. Lineup % is how often the team / pitcher appears in the sim lineups."
+    )
+
+    expo = meta["team_expo"]
+    g = games.copy()
+    g["Away lineup %"] = g["_away"].map(lambda t: expo.get(t, 0.0))
+    g["Home lineup %"] = g["_home"].map(lambda t: expo.get(t, 0.0))
+    st.markdown("**Matchups** — sorted by projected game total (an over/under proxy)")
+    st.dataframe(
+        g[["Matchup", "Time", "Away SP", "Home SP", "Away proj", "Home proj",
+           "Game proj total", "Away lineup %", "Home lineup %"]],
+        use_container_width=True, hide_index=True,
+        column_config={
+            "Away proj": st.column_config.NumberColumn(format="%.1f"),
+            "Home proj": st.column_config.NumberColumn(format="%.1f"),
+            "Game proj total": st.column_config.NumberColumn(format="%.1f"),
+            "Away lineup %": st.column_config.NumberColumn(format="%.1f%%"),
+            "Home lineup %": st.column_config.NumberColumn(format="%.1f%%"),
+        },
+    )
+
+    st.markdown("**Probable starting pitchers** (highest-salaried SP per team)")
+    st.dataframe(
+        pitchers, use_container_width=True, hide_index=True, height=360,
+        column_config={
+            "Salary": st.column_config.NumberColumn(format="$%d"),
+            "Proj pts": st.column_config.NumberColumn(format="%.1f"),
+            "Lineup %": st.column_config.NumberColumn(format="%.1f%%"),
+        },
+    )
+
+    if not sc.live_odds_available():
+        st.caption(
+            "💡 Real Vegas over/unders and confirmed probable pitchers need a live "
+            "odds/MLB feed (this slate is simulated). A hook is in place — set "
+            "`ODDS_API_KEY` to wire one up."
+        )
+
+
 # --------------------------------------------------------------------------- #
-# Tabs: explore/build vs. summary analytics
+# Tabs: explore/build, summary analytics, slate context
 # --------------------------------------------------------------------------- #
-tab_explore, tab_summary = st.tabs(["🔍 Explore & Build", "📊 Summary Stats"])
+tab_explore, tab_summary, tab_slate = st.tabs(
+    ["🔍 Explore & Build", "📊 Summary Stats", "🗓️ Slate"]
+)
 
 with tab_summary:
     render_summary()
+
+with tab_slate:
+    render_slate()
 
 with tab_explore:
     render_explore()
