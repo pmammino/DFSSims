@@ -426,12 +426,18 @@ def render_explore():
         "Stats are colour-scaled green (good) → red (bad). Tick the checkboxes to "
         "pick lineups, then **Add checked to basket** (which persists across filters)."
     )
-    show_n = int(hc2.number_input(
-        "Rows shown", min_value=25, max_value=1000,
-        value=min(250, n_matches), step=25,
-        help="Top lineups by ROI rendered in the table. Lower this if sorting feels "
-        "slow; the full filtered set is still used by 'Add all filtered' and export.",
-    ))
+    if n_matches <= 25:
+        # Too few matches to bother with a row cap — show them all.
+        show_n = n_matches
+        hc2.caption(f"{n_matches:,} match{'es' if n_matches != 1 else ''}")
+    else:
+        show_n = int(hc2.number_input(
+            "Rows shown", min_value=25, max_value=min(1000, n_matches),
+            value=min(250, n_matches), step=25,
+            help="Top lineups by ROI rendered in the table. Lower this if sorting "
+            "feels slow; the full filtered set is still used by 'Add all filtered' "
+            "and export.",
+        ))
 
     shown = filtered.head(show_n)
     view = make_view(shown)
