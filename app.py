@@ -502,8 +502,9 @@ def render_explore():
     n_matches = len(filtered)
     hc1, hc2 = st.columns([3, 1])
     hc1.caption(
-        "Stats are colour-scaled green (good) → red (bad). Tick the checkboxes to "
-        "pick lineups, then **Add checked to basket** (which persists across filters)."
+        "Stats are colour-scaled green (good) → red (bad). Tick **✓** to add a "
+        "lineup to your basket — the checkbox stays with its lineup across sorts "
+        "and filters, and the basket persists."
     )
     if n_matches <= 25:
         # Too few matches to bother with a row cap — show them all.
@@ -519,35 +520,44 @@ def render_explore():
         ))
 
     shown = filtered.head(show_n)
+    shown_lineups = shown["LineupNum"].to_numpy()
     view = make_view(shown)
+    # Lead with a Select checkbox derived from basket membership, so it follows
+    # the lineup (not the row position) when the grid is sorted or filtered.
+    view.insert(0, "✓", [ln in st.session_state.selected for ln in shown_lineups])
     if n_matches > show_n:
         st.caption(f"Showing the top **{show_n:,}** of **{n_matches:,}** matching lineups by ROI.")
 
     # Selection toolbar.
-    tb1, tb2, tb3 = st.columns([1.6, 1.4, 3])
-    add_clicked = tb1.button("➕ Add checked to basket", use_container_width=True)
-    if tb2.button("🗑️ Clear basket", use_container_width=True):
+    tb1, tb2 = st.columns([1.4, 4])
+    if tb1.button("🗑️ Clear basket", use_container_width=True):
         st.session_state.selected = set()
         st.rerun()
-    tb3.metric("In export basket", f"{len(st.session_state.selected):,}")
+    tb2.metric("In export basket", f"{len(st.session_state.selected):,}")
 
-    event = st.dataframe(
+    edited = st.data_editor(
+        # Styler colours apply to the disabled (non-editable) columns; the ✓
+        # column stays editable.
         style_view(view, team_frame(shown)),
         use_container_width=True,
         hide_index=True,
         height=460,
-        column_config=RESULTS_COLCONFIG,
-        on_select="rerun",
-        selection_mode="multi-row",
+        disabled=[c for c in view.columns if c != "✓"],
+        column_config={
+            "✓": st.column_config.CheckboxColumn("✓", width="small"),
+            **RESULTS_COLCONFIG,
+        },
         key="results_grid",
     )
 
-    picked_rows = event.selection["rows"] if event and event.selection else []
-    if add_clicked and picked_rows:
-        st.session_state.selected |= set(shown.iloc[picked_rows]["LineupNum"].tolist())
+    # Reconcile basket from the edited checkboxes: visible rows are authoritative,
+    # selections for lineups outside the current view are preserved.
+    checked = set(shown_lineups[edited["✓"].to_numpy()])
+    visible = set(shown_lineups)
+    new_selected = (st.session_state.selected - visible) | checked
+    if new_selected != st.session_state.selected:
+        st.session_state.selected = new_selected
         st.rerun()
-    elif add_clicked:
-        st.toast("No rows checked — tick lineups in the table first.")
 
     # Quick add-all of the current filter (handy after narrowing a search).
     if st.button(f"➕ Add all {n_matches:,} filtered lineups to basket"):

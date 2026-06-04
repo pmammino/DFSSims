@@ -58,10 +58,12 @@ population of lineups), and **🗓️ Slate** (matchup / pitcher context).
   tinted by team so stacks stand out at a glance).
 - **Upload Lineup Template** button — swap in a fresh `DKSalaries.csv` whenever
   the DraftKings export changes; its player IDs and slots drive the export.
-- **Export basket** — check lineups in the results table and **Add checked to
-  basket** (or add all filtered). The basket **survives filter changes** so you
-  can build a set across multiple queries; remove specific lineups or clear all.
-  Only the basket is exported, on demand:
+- **Export basket** — tick the **✓** column in the results table to add a
+  lineup to your basket. The checkbox is tied to the lineup (not the row
+  position), so it **stays with its lineup when you sort or filter**, and the
+  basket **survives filter changes** so you can build a set across multiple
+  queries. Use "Add all filtered" to bulk-add, or remove specific lineups /
+  clear all. Only the basket is exported, on demand:
   - **DraftKings upload CSV** — the selected lineups (ROI-sorted, max 500), with
     each (possibly multi-position) player assigned to a roster slot via
     bipartite matching and IDs in DK slot order.
