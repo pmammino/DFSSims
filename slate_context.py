@@ -168,7 +168,10 @@ def slate_label(dk_players: pd.DataFrame) -> tuple[str, float]:
         return (f"{date_str or 'Slate'} · {n_games} games ({n_teams} teams)", 0.0)
 
     first = min(starts)
-    label = (f"{first.strftime('%b %d')} · {first.strftime('%-I:%M %p')} ET "
-             f"first pitch · {n_games} games ({n_teams} teams)")
+    # Build the time portably (%-I / %#I are platform-specific — avoid them).
+    hour12 = first.hour % 12 or 12
+    time_str = f"{hour12}:{first.minute:02d} {first.strftime('%p')}"
+    label = (f"{first.strftime('%b %d')} · {time_str} ET first pitch · "
+             f"{n_games} games ({n_teams} teams)")
     return label, first.timestamp()
 
