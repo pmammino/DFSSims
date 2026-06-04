@@ -139,3 +139,36 @@ def build_slate(dk_players: pd.DataFrame, lineups: pd.DataFrame | None = None,
 def live_odds_available() -> bool:
     """Hook for a real odds feed — wire up an odds API key here later."""
     return bool(os.environ.get("ODDS_API_KEY"))
+
+
+def slate_label(dk_players: pd.DataFrame) -> tuple[str, float]:
+    """Human-readable slate label + a sortable key, from the template's games.
+
+    e.g. ("Jun 04 · 2:10 PM ET first pitch · 4 games (8 teams)", <epoch-ish>).
+    Distinguishes an early/afternoon slate from a main/evening one by start time.
+    """
+    import datetime as _dt
+
+    infos = dk_players["Game Info"].dropna().map(parse_game_info)
+    starts, date_str = [], ""
+    for parsed in infos:
+        if not parsed:
+            continue
+        _, _, date_str, time_str = parsed
+        clean = re.sub(r"\s*[A-Z]{2,3}\s*$", "", time_str).strip()  # drop "ET"
+        try:
+            starts.append(_dt.datetime.strptime(f"{date_str} {clean}",
+                                                "%m/%d/%Y %I:%M%p"))
+        except ValueError:
+            continue
+
+    n_games = dk_players["Game Info"].nunique()
+    n_teams = dk_players["TeamAbbrev"].nunique()
+    if not starts:
+        return (f"{date_str or 'Slate'} · {n_games} games ({n_teams} teams)", 0.0)
+
+    first = min(starts)
+    label = (f"{first.strftime('%b %d')} · {first.strftime('%-I:%M %p')} ET "
+             f"first pitch · {n_games} games ({n_teams} teams)")
+    return label, first.timestamp()
+

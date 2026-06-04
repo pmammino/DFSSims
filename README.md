@@ -5,15 +5,19 @@ DraftKings MLB lineups, ranked by ROI.
 
 ## Data
 
-The app reads three CSVs from the repo root:
-
 | File | Role |
 |------|------|
 | `sim_lineups.csv` | The lineup structures — one row per player per lineup (players, salaries, eligible positions, ownership, team). |
 | `sim_results.csv` | Simulation results — one row per lineup (ROI, WinRate, ITMRate, Top10Rate, ranks, profit). |
-| `DKSalaries.csv` | The DraftKings upload template (roster slots + player IDs) used to build an uploadable lineup file. |
+| `templates/*.csv` | One DraftKings template per slate (roster slots + player IDs). Used to build the uploadable lineup file and the Slate tab. |
 
-The two sim files join on `LineupNum`. Each lineup is a classic MLB roster:
+The two sim files can contain **multiple slates** (`SlateID`). The app detects
+each slate, auto-matches it to the template whose player IDs overlap it, and
+labels it by **first-pitch time + game count** (e.g. *Jun 04 · 1:05 PM ET first
+pitch · 4 games*) — so an early/afternoon slate is easy to tell from the main
+slate. A **Slate selector** at the top scopes the entire app (lineups, player
+pool, template, exports) to the chosen slate. The sim files join on `LineupNum`
+within a slate; each lineup is a classic MLB roster:
 `P, P, C, 1B, 2B, 3B, SS, OF, OF, OF`.
 
 ## Features

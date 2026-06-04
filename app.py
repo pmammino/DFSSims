@@ -16,10 +16,13 @@ import dfs_data as dd
 import nl_filter as nf
 import slate_context as sc
 
+import glob
+import io
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 LINEUPS_CSV = os.path.join(HERE, "sim_lineups.csv")
 RESULTS_CSV = os.path.join(HERE, "sim_results.csv")
-TEMPLATE_CSV = os.path.join(HERE, "DKSalaries.csv")
+TEMPLATE_DIR = os.path.join(HERE, "templates")
 
 st.set_page_config(page_title="DFS Lineup Explorer", page_icon="⚾", layout="wide")
 
@@ -28,46 +31,115 @@ st.set_page_config(page_title="DFS Lineup Explorer", page_icon="⚾", layout="wi
 # Cached data loaders
 # --------------------------------------------------------------------------- #
 @st.cache_data(show_spinner="Loading lineups…")
-def get_lineups() -> pd.DataFrame:
+def get_all_lineups() -> pd.DataFrame:
     return dd.load_lineups(LINEUPS_CSV)
 
 
 @st.cache_data(show_spinner="Loading results…")
-def get_results() -> pd.DataFrame:
+def get_all_results() -> pd.DataFrame:
     return dd.load_results(RESULTS_CSV)
 
 
 @st.cache_data(show_spinner="Building lineup table…")
-def get_lineup_table() -> pd.DataFrame:
-    return dd.build_lineup_table(get_lineups(), get_results())
+def get_lineup_table(slate_id: str) -> pd.DataFrame:
+    lu = get_all_lineups()
+    res = get_all_results()
+    return dd.build_lineup_table(
+        lu[lu["SlateID"] == slate_id], res[res["SlateID"] == slate_id]
+    )
 
 
-@st.cache_data(show_spinner="Parsing DK template…")
-def get_default_template():
-    return dd.parse_dk_template(TEMPLATE_CSV)
+@st.cache_data(show_spinner="Loading templates…")
+def get_bundled_templates() -> list[tuple[str, object]]:
+    """Parse every DK template in templates/ — returns (name, (slots, dkp))."""
+    out = []
+    for path in sorted(glob.glob(os.path.join(TEMPLATE_DIR, "*.csv"))):
+        try:
+            out.append((os.path.basename(path), dd.parse_dk_template(path)))
+        except Exception:  # noqa: BLE001 — skip malformed templates
+            continue
+    return out
 
 
 def parse_uploaded_template(file_bytes: bytes):
-    import io
-
     return dd.parse_dk_template(io.BytesIO(file_bytes))
 
 
-# --------------------------------------------------------------------------- #
-# Load data
-# --------------------------------------------------------------------------- #
-players = get_lineups()
-table = get_lineup_table()
+def _template_id_set(parsed) -> set[str]:
+    _, dkp = parsed
+    return set(dkp["ID"].astype(str))
 
+
+# --------------------------------------------------------------------------- #
+# Load data + map each slate to its template / label
+# --------------------------------------------------------------------------- #
+lineups_all = get_all_lineups()
+results_all = get_all_results()
+slate_ids = sorted(lineups_all["SlateID"].unique())
+
+
+@st.cache_data(show_spinner="Identifying slates…")
+def build_slate_index(_templates) -> dict:
+    """For each slate: best-matching template index + a human-readable label."""
+    index = {}
+    for sid in slate_ids:
+        ids = set(lineups_all.loc[lineups_all["SlateID"] == sid, "PlayerContestID"]
+                  .astype(str))
+        best_i, best_ov = None, 0.0
+        for i, (_, parsed) in enumerate(_templates):
+            tmpl_ids = _template_id_set(parsed)
+            ov = (len(ids & tmpl_ids) / len(ids)) if ids else 0.0
+            if ov > best_ov:
+                best_i, best_ov = i, ov
+        label, sort_key = f"Slate {sid}", 0.0
+        if best_i is not None and best_ov >= 0.5:
+            label, sort_key = sc.slate_label(_templates[best_i][1][1])
+        index[sid] = {"template_i": best_i if best_ov >= 0.5 else None,
+                      "overlap": best_ov, "label": label, "sort_key": sort_key}
+    return index
+
+
+bundled_templates = get_bundled_templates()
+slate_index = build_slate_index(bundled_templates)
+
+# Order slates by first pitch so "early" slates sort before "main" slates.
+ordered_slates = sorted(slate_ids, key=lambda s: slate_index[s]["sort_key"])
+
+# --------------------------------------------------------------------------- #
+# Header + slate selector (powers everything below)
+# --------------------------------------------------------------------------- #
+st.title("⚾ DFS Lineup Explorer")
+
+if len(ordered_slates) > 1:
+    selected_slate = st.selectbox(
+        "Slate",
+        ordered_slates,
+        format_func=lambda s: f"{slate_index[s]['label']}  ·  id {s}",
+        help="Each slate has its own lineups, player pool, and DK template.",
+    )
+else:
+    selected_slate = ordered_slates[0]
+    st.caption(f"Slate: {slate_index[selected_slate]['label']}  ·  id {selected_slate}")
+
+# Reset slate-scoped state when the slate changes (filters/basket reference the
+# old slate's players & lineup numbers, which don't exist in the new slate).
+if st.session_state.get("current_slate") != selected_slate:
+    st.session_state["current_slate"] = selected_slate
+    for k in ("f_include", "f_exclude", "f_stack_teams", "f_exclude_teams", "f_patterns"):
+        st.session_state[k] = []
+    st.session_state["f_min_stack"] = 1
+    st.session_state["selected"] = set()
+    st.session_state.pop("nl_summary", None)
+
+# Slate-scoped data.
+players = lineups_all[lineups_all["SlateID"] == selected_slate].reset_index(drop=True)
+table = get_lineup_table(selected_slate)
 all_player_names = sorted(players["FullName"].unique())
 all_teams = sorted(players["Team"].unique())
 all_patterns = sorted(table["StackPattern"].unique())
 
-# Persistent export basket: lineup numbers the user has selected. This survives
-# filter changes and reruns until the user unchecks or clears them.
-if "selected" not in st.session_state:
-    st.session_state.selected = set()
-
+# Persistent export basket: lineup numbers selected within the current slate.
+st.session_state.setdefault("selected", set())
 # Defaults for the filter widgets that the conversational parser can populate.
 st.session_state.setdefault("f_inc_mode", "All of these")
 st.session_state.setdefault("f_min_stack", 1)
@@ -176,32 +248,38 @@ RESULTS_COLCONFIG = {
     "Stacks": st.column_config.TextColumn(width="small"),
 }
 
-# --------------------------------------------------------------------------- #
-# Header
-# --------------------------------------------------------------------------- #
-st.title("⚾ DFS Lineup Explorer")
 st.caption("Filter and query simulated DraftKings lineups, sorted by ROI.")
 
 # --------------------------------------------------------------------------- #
-# Lineup template (DraftKings upload) — collapsible, top of page
+# Lineup template — auto-matched to the slate, with optional upload override
 # --------------------------------------------------------------------------- #
-with st.expander("⚙️ Lineup template (DraftKings upload)", expanded=False):
+with st.expander("⚙️ Lineup template (DraftKings)", expanded=False):
     uploaded = st.file_uploader(
-        "Upload DK Salaries template (.csv)",
+        "Override with a DK Salaries template (.csv)",
         type="csv",
-        help="DraftKings export changes often. Upload a fresh DKSalaries.csv to "
-        "use the current player IDs for the export.",
+        help="A template is auto-matched to the selected slate by player ID. "
+        "Upload one here to override it (e.g. a refreshed export).",
     )
     try:
         if uploaded is not None:
             slots, dk_players = parse_uploaded_template(uploaded.getvalue())
             st.success(f"Using uploaded template ({len(dk_players)} players).")
         else:
-            slots, dk_players = get_default_template()
-            st.caption("Using bundled DKSalaries.csv.")
+            tmpl_i = slate_index[selected_slate]["template_i"]
+            if tmpl_i is None:
+                raise ValueError(
+                    "No bundled template matches this slate's player IDs. "
+                    "Upload the matching DKSalaries.csv to enable export."
+                )
+            name, (slots, dk_players) = bundled_templates[tmpl_i]
+            st.caption(
+                f"Auto-matched template **{name}** "
+                f"({slate_index[selected_slate]['overlap']:.0%} ID match, "
+                f"{len(dk_players)} players)."
+            )
         valid_ids = set(dk_players["ID"].astype(str))
     except Exception as exc:  # noqa: BLE001
-        st.error(f"Template error: {exc}")
+        st.warning(f"Template: {exc}")
         slots, valid_ids, dk_players = (
             ["P", "P", "C", "1B", "2B", "3B", "SS", "OF", "OF", "OF"],
             None, None,

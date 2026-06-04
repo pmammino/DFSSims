@@ -64,6 +64,7 @@ def load_lineups(source) -> pd.DataFrame:
     raw = _read_csv(source)
     df = pd.DataFrame(
         {
+            "SlateID": raw["SlateID"].astype(str),
             "LineupNum": raw["LineupNum"].astype(int),
             "PlayerID": raw["PlayerID"].astype(str),
             "PlayerContestID": raw["PlayerContestID"].astype(str),
@@ -84,7 +85,10 @@ def load_results(source) -> pd.DataFrame:
         "AvgProfit", "AvgPayout", "ROI", "WinRate", "Top10Rate",
         "ITMRate", "AvgRank", "MedianRank", "BestRank", "WorstRank",
     ]
-    out = pd.DataFrame({"LineupNum": raw["LineupNum"].astype(int)})
+    out = pd.DataFrame({
+        "SlateID": raw["SlateID"].astype(str),
+        "LineupNum": raw["LineupNum"].astype(int),
+    })
     for col in numeric_cols:
         if col in raw.columns:
             out[col] = pd.to_numeric(raw[col], errors="coerce")
