@@ -268,8 +268,9 @@ with st.expander("⚙️ Lineup template (DraftKings)", expanded=False):
             tmpl_i = slate_index[selected_slate]["template_i"]
             if tmpl_i is None:
                 raise ValueError(
-                    "No bundled template matches this slate's player IDs. "
-                    "Upload the matching DKSalaries.csv to enable export."
+                    "No bundled template matches this slate. Export still works "
+                    "(built from the slate's player IDs); a template only adds the "
+                    "Slate-tab matchups, start times, and projections."
                 )
             name, (slots, dk_players) = bundled_templates[tmpl_i]
             st.caption(
@@ -718,6 +719,12 @@ def render_explore():
     # Export the selected lineups
     # --------------------------------------------------------------------------- #
     st.markdown("#### ⬇️ Export selected lineups")
+    st.caption(
+        "The DraftKings upload file is built directly from the slate's player IDs "
+        "(`PlayerContestID`) and the classic roster slots — no blank template "
+        "needed. A matching template, when present, is used only to flag IDs that "
+        "aren't on the slate."
+    )
     export_nums = basket["LineupNum"].tolist()  # ROI-sorted
     if len(export_nums) > 500:
         st.warning(
@@ -726,12 +733,15 @@ def render_explore():
         )
         export_nums = export_nums[:500]
 
-    upload_df, skipped = dd.build_dk_upload(players, export_nums, slots, valid_ids)
-    if skipped:
+    # Always build from the slate's own player IDs (template-independent). The
+    # template's IDs, if available, are passed only to flag off-slate players.
+    upload_df, skipped = dd.build_dk_upload(
+        players, export_nums, dd.CLASSIC_SLOTS, valid_ids
+    )
+    if skipped and valid_ids is not None:
         st.warning(
             f"{len(skipped)} selected lineup(s) had players whose IDs aren't in the "
-            f"current template (these export with blank slots). Upload a matching DK "
-            f"template above to fix. Lineups: {skipped[:10]}{'…' if len(skipped) > 10 else ''}"
+            f"matched template. Lineups: {skipped[:10]}{'…' if len(skipped) > 10 else ''}"
         )
 
     e1, e2 = st.columns(2)
